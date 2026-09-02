@@ -3,6 +3,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
+import type { KeybindingsManager, Theme } from "@earendil-works/pi-coding-agent";
+import type { TUI } from "@earendil-works/pi-tui";
 import { DEFAULT_CONFIG } from "../extensions/subagent/config.ts";
 import { showUnifiedSubagentSettings, UnifiedSubagentSettings } from "../extensions/subagent/settings-ui.ts";
 import type { SettingsResult } from "../extensions/subagent/settings-ui.ts";
@@ -20,7 +22,7 @@ afterEach(() => {
 const theme = {
 	fg: (_name: string, text: string) => text,
 	bold: (text: string) => text,
-};
+} as unknown as Theme;
 const keybindings = {
 	matches: (data: string, action: string) =>
 		({
@@ -29,7 +31,7 @@ const keybindings = {
 			"tui.select.confirm": "enter",
 			"tui.select.cancel": "escape",
 		} as Record<string, string>)[action] === data,
-};
+} as unknown as KeybindingsManager;
 
 describe("UnifiedSubagentSettings", () => {
 	it("configures model, effort, tools, and save scope through one component", async () => {
@@ -40,7 +42,7 @@ describe("UnifiedSubagentSettings", () => {
 			resolveDone = resolve;
 		});
 		const component = new UnifiedSubagentSettings({
-			tui: { requestRender() {} },
+			tui: { requestRender() {} } as unknown as TUI,
 			theme,
 			keybindings,
 			initialConfig: DEFAULT_CONFIG,
@@ -103,7 +105,7 @@ describe("UnifiedSubagentSettings", () => {
 			ui: {
 				notify() {},
 				custom: async (factory: Function) => {
-					const component = factory({ requestRender() {} }, theme, keybindings, () => undefined) as UnifiedSubagentSettings;
+					const component = factory({ requestRender() {} } as unknown as TUI, theme, keybindings, () => undefined) as UnifiedSubagentSettings;
 					component.handleInput("enter");
 					seen.push(component.render(120).join("\n"));
 					component.handleInput("escape");
