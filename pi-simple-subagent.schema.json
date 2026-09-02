@@ -1,0 +1,219 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/CoderDoubleflower/pi-simple-subagent/blob/main/pi-simple-subagent.schema.json",
+  "title": "pi-simple-subagent configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "version": {
+      "const": 1
+    },
+    "defaultProfile": {
+      "type": "string",
+      "minLength": 1
+    },
+    "model": {
+      "$ref": "#/$defs/model"
+    },
+    "effort": {
+      "$ref": "#/$defs/effort"
+    },
+    "tools": {
+      "$ref": "#/$defs/tools"
+    },
+    "maxAgents": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 32
+    },
+    "rpcStartupTimeoutMs": {
+      "type": "integer",
+      "minimum": 1000,
+      "maximum": 120000
+    },
+    "defaultWaitTimeoutMs": {
+      "type": "integer",
+      "minimum": 100,
+      "maximum": 120000
+    },
+    "maxWaitTimeoutMs": {
+      "type": "integer",
+      "minimum": 1000,
+      "maximum": 600000
+    },
+    "killGraceMs": {
+      "type": "integer",
+      "minimum": 100,
+      "maximum": 60000
+    },
+    "killForceMs": {
+      "type": "integer",
+      "minimum": 100,
+      "maximum": 60000
+    },
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "maxFinalBytes": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 10485760
+        },
+        "maxStderrBytes": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 1048576
+        },
+        "maxActivityItems": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 5000
+        },
+        "collapsedActivityItems": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 20
+        },
+        "showToolActivity": {
+          "type": "boolean"
+        },
+        "showUsage": {
+          "type": "boolean"
+        },
+        "showElapsed": {
+          "type": "boolean"
+        },
+        "showExpandHint": {
+          "type": "boolean"
+        }
+      }
+    },
+    "process": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "type": "string",
+          "minLength": 1
+        },
+        "extraArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "inheritEnvironment": {
+          "type": "boolean"
+        },
+        "excludeTools": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "approveProject": {
+          "enum": [
+            "inherit",
+            "always",
+            "never"
+          ]
+        }
+      }
+    },
+    "profiles": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/profile"
+      },
+      "propertyNames": {
+        "pattern": "^[A-Za-z0-9_.-]+$"
+      }
+    }
+  },
+  "$defs": {
+    "model": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Use inherit or provider/model."
+    },
+    "effort": {
+      "enum": [
+        "inherit",
+        "off",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    },
+    "tools": {
+      "oneOf": [
+        {
+          "enum": [
+            "inherit",
+            "none"
+          ]
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        }
+      ]
+    },
+    "profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "systemPrompt": {
+          "type": "string"
+        },
+        "model": {
+          "$ref": "#/$defs/model"
+        },
+        "effort": {
+          "$ref": "#/$defs/effort"
+        },
+        "tools": {
+          "$ref": "#/$defs/tools"
+        },
+        "cwd": {
+          "type": "string",
+          "minLength": 1
+        },
+        "extraArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

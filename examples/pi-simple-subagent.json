@@ -1,0 +1,79 @@
+{
+  "$schema": "../pi-simple-subagent.schema.json",
+  "version": 1,
+  "defaultProfile": "default",
+  "model": "inherit",
+  "effort": "inherit",
+  "tools": "inherit",
+  "maxAgents": 4,
+  "rpcStartupTimeoutMs": 15000,
+  "defaultWaitTimeoutMs": 10000,
+  "maxWaitTimeoutMs": 120000,
+  "killGraceMs": 1500,
+  "killForceMs": 3000,
+  "output": {
+    "maxFinalBytes": 49152,
+    "maxStderrBytes": 16384,
+    "maxActivityItems": 200,
+    "collapsedActivityItems": 3,
+    "showToolActivity": true,
+    "showUsage": true,
+    "showElapsed": true,
+    "showExpandHint": true
+  },
+  "process": {
+    "command": "pi",
+    "extraArgs": [],
+    "env": {},
+    "inheritEnvironment": true,
+    "excludeTools": [
+      "spawn_agent",
+      "send_input",
+      "wait_agent",
+      "close_agent",
+      "list_agents",
+      "subagent"
+    ],
+    "approveProject": "inherit"
+  },
+  "profiles": {
+    "default": {
+      "description": "General-purpose subagent for a concrete, bounded task."
+    },
+    "explorer": {
+      "description": "Read-only codebase exploration and evidence gathering.",
+      "systemPrompt": "Inspect the codebase and report evidence. Do not modify files.",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    "worker": {
+      "description": "Implementation worker for a clearly bounded write scope.",
+      "systemPrompt": "Edit only the assigned files, run relevant checks, and list changed files."
+    },
+    "reviewer": {
+      "description": "Correctness, regression, security, and test review.",
+      "systemPrompt": "Report findings in severity order with concrete file references. Do not modify files.",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    },
+    "fast_scan": {
+      "description": "Low-cost quick scan.",
+      "model": "openai/your-fast-model",
+      "effort": "low",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ]
+    }
+  }
+}
