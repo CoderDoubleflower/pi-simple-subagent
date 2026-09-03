@@ -15,7 +15,7 @@ pi --mode rpc --no-session
 - 顶层配置、Profile 与单次 `spawn_agent` 参数均可覆盖模型、effort 和工具
 - **唯一快捷配置入口 `/subagent-config`**：模型、effort、工具与保存范围集中在同一个 TUI 中
 - 用户级、项目级和显式配置文件三级覆盖；JSON 配置可设置全部运行参数
-- ClaudeCodeRev / Claude Code 风格的 Subagent 状态、活动树、统计和展开详情渲染
+- 通过带版本的结构化 `details` 协议向独立渲染插件暴露状态、活动、统计与最终结果
 - 后台并行执行、后续对话、排队 follow-up、即时 steer、等待和关闭
 - 并发槽位、启动失败清理、父进程退出清理和协作式终止
 - 严格 LF JSONL 解码，正确处理拆分的 UTF-8、U+2028 和 U+2029
@@ -43,6 +43,8 @@ pi -e "$(pwd)"
 ```
 
 运行环境要求 Node.js 22.19 或更高版本。
+
+本插件不再注册 `renderCall` / `renderResult`。需要 Claude Code 风格的 Subagent 展示时，同时安装 [`pi-open-tui`](https://github.com/CoderDoubleflower/pi-open-tui)；未安装渲染插件时，Pi 会使用默认工具结果视图，编排和 RPC 能力不受影响。
 
 ## 模型可调用工具
 
@@ -158,7 +160,7 @@ R      重置快捷设置
 Esc    返回或取消
 ```
 
-插件不会为 model、effort、tools 分别注册零散命令。TUI 保存时只修改所选配置层中的这三个快捷字段，`process`、并发、超时、输出、Profile 以及未知的编辑器元数据均原样保留。
+插件不会为 model、effort、tools 分别注册零散命令。TUI 保存时只修改所选配置层中的这三个快捷字段，`process`、并发、超时、输出保留限制、Profile 以及未知的编辑器元数据均原样保留。
 
 ## 配置文件
 
@@ -192,12 +194,7 @@ Esc    返回或取消
   "output": {
     "maxFinalBytes": 49152,
     "maxStderrBytes": 16384,
-    "maxActivityItems": 200,
-    "collapsedActivityItems": 3,
-    "showToolActivity": true,
-    "showUsage": true,
-    "showElapsed": true,
-    "showExpandHint": true
+    "maxActivityItems": 200
   },
   "process": {
     "command": "pi",
@@ -246,7 +243,7 @@ Esc    返回或取消
 | `maxWaitTimeoutMs` | 单次等待允许的上限 |
 | `killGraceMs` | `SIGTERM` 后的宽限时间 |
 | `killForceMs` | `SIGKILL` 后的最终等待时间 |
-| `output.*` | 最终结果、stderr、活动记录和折叠渲染控制 |
+| `output.*` | 最终回复、stderr 与活动记录的进程内保留/截断上限；不控制渲染 |
 | `process.command` | 子 Pi 可执行文件，默认 `pi` |
 | `process.extraArgs` | 追加到每个子 Pi 的 CLI 参数；保留顺序和重复项 |
 | `process.env` | 注入所有子代理的环境变量 |
@@ -275,37 +272,22 @@ spawn_agent 单次参数
 - `worker`：适合限定写入范围的实现任务；
 - `reviewer`：只开放读取类工具，按严重程度报告问题。
 
-## ClaudeCodeRev 风格渲染
+## 渲染职责与数据协议
 
-实现参考 ClaudeCodeRev 的 `AgentProgressLine`、AgentTool UI、后台任务状态和工具活动摘要结构：
+`pi-simple-subagent` 只负责 Subagent 编排、RPC 生命周期以及结构化结果，不再拥有任何 TUI 渲染代码。五个工具返回的 `details` 使用稳定标识：
 
-- 主调用使用实心圆点；
-- 多代理结果使用 `├─` / `└─` 树；
-- 当前动作或终态使用嵌套的 `⎿`；
-- 原始工具参数转换为 `Read(path)`、`Grep(pattern in path)` 等短活动名称；
-- 折叠态显示 tool uses、tokens 和 elapsed；
-- 展开态显示 Progress、Configuration、Prompt、Response/Error 和 Process log。
-
-单个代理运行时：
-
-```text
-● explorer (inspect_api)
-  ⎿  Read(src/auth.ts) (3 tool uses · 14.2k tokens · 27s)
-     Grep(authorize in src)
-     Read(src/policy.ts)
+```json
+{
+  "kind": "pi-simple-subagent",
+  "version": 1,
+  "action": "wait",
+  "snapshots": []
+}
 ```
 
-多个代理：
+其中 `snapshots` 提供代理状态、最近活动、工具调用、token usage、耗时、错误与最终回复等原始数据。`pi-open-tui` 识别该协议并负责 Claude Code 风格的折叠/展开展示；视觉密度等设置也归 `pi-open-tui` 管理。
 
-```text
-● Wait (inspect_api, review_tests)
-├─ explorer (inspect_api) · 6 tool uses · 20.6k tokens · 42s
-│  ⎿  Done
-└─ reviewer (review_tests) · 4 tool uses · 12.1k tokens · 31s
-   ⎿  Grep(timeout in tests)
-```
-
-按 Pi 的工具展开键可查看完整内容。`output.collapsedActivityItems` 和各 `show*` 字段可控制折叠信息密度。
+为支持滚动升级，建议先合并并更新 `pi-open-tui`，再更新本插件。新版 `pi-open-tui` 同时兼容迁移前未携带 `kind` / `version` 的旧结果；新版 `pi-simple-subagent` 在没有 `pi-open-tui` 时仍能正常工作，只是使用 Pi 默认工具视图。
 
 ## 进程与安全边界
 
@@ -337,7 +319,7 @@ npm run check  # typecheck + test
 
 测试覆盖：
 
-- 扩展入口仅注册一个统一配置命令，并在子 Pi 中阻止递归注册；
+- 扩展入口仅注册一个统一配置命令、没有渲染 hooks，并在子 Pi 中阻止递归注册；
 - 配置归一化、三级覆盖、项目 trust、显式配置、原子写入；
 - TUI 快捷字段更新时保留高级字段和未知元数据；
 - CLI 重复参数顺序、模型/effort/tools/Profile/单次覆盖优先级；

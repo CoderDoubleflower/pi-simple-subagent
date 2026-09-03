@@ -29,11 +29,6 @@ export interface OutputConfig {
 	maxFinalBytes: number;
 	maxStderrBytes: number;
 	maxActivityItems: number;
-	collapsedActivityItems: number;
-	showToolActivity: boolean;
-	showUsage: boolean;
-	showElapsed: boolean;
-	showExpandHint: boolean;
 }
 
 export interface ProcessConfig {
@@ -126,7 +121,6 @@ export interface AgentSnapshot {
 	startedAt: number;
 	updatedAt: number;
 	completedAt?: number;
-	display: OutputConfig;
 }
 
 export interface SpawnAgentRequest {
@@ -157,12 +151,22 @@ export interface CloseResult {
 	snapshot?: AgentSnapshot;
 }
 
+export const AGENT_TOOL_DETAILS_KIND = "pi-simple-subagent" as const;
+
 export interface AgentToolDetails {
+	kind: typeof AGENT_TOOL_DETAILS_KIND;
+	version: 1;
 	action: "spawn" | "send" | "wait" | "close" | "list";
 	snapshots: AgentSnapshot[];
 	timedOut?: boolean;
 	message?: string;
 	previousSnapshot?: AgentSnapshot;
+}
+
+export type AgentToolDetailsPayload = Omit<AgentToolDetails, "kind" | "version">;
+
+export function createAgentToolDetails(details: AgentToolDetailsPayload): AgentToolDetails {
+	return { kind: AGENT_TOOL_DETAILS_KIND, version: 1, ...details };
 }
 
 export type AgentWireStatus =

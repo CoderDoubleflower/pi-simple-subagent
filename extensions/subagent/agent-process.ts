@@ -154,7 +154,6 @@ export class AgentProcess {
 			activities: [],
 			startedAt: now,
 			updatedAt: now,
-			display: { ...options.config.output },
 		};
 	}
 

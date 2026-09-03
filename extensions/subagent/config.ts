@@ -31,11 +31,6 @@ export const DEFAULT_CONFIG: SubagentConfig = {
 		maxFinalBytes: 48 * 1024,
 		maxStderrBytes: 16 * 1024,
 		maxActivityItems: 200,
-		collapsedActivityItems: 3,
-		showToolActivity: true,
-		showUsage: true,
-		showElapsed: true,
-		showExpandHint: true,
 	},
 	process: {
 		command: "pi",
@@ -179,11 +174,6 @@ export function normalizeConfig(value: unknown): SubagentConfig {
 			maxFinalBytes: boundedInteger(output.maxFinalBytes, defaults.output.maxFinalBytes, 1_024, 10 * 1024 * 1024),
 			maxStderrBytes: boundedInteger(output.maxStderrBytes, defaults.output.maxStderrBytes, 1_024, 1024 * 1024),
 			maxActivityItems: boundedInteger(output.maxActivityItems, defaults.output.maxActivityItems, 10, 5_000),
-			collapsedActivityItems: boundedInteger(output.collapsedActivityItems, defaults.output.collapsedActivityItems, 0, 20),
-			showToolActivity: booleanValue(output.showToolActivity, defaults.output.showToolActivity),
-			showUsage: booleanValue(output.showUsage, defaults.output.showUsage),
-			showElapsed: booleanValue(output.showElapsed, defaults.output.showElapsed),
-			showExpandHint: booleanValue(output.showExpandHint, defaults.output.showExpandHint),
 		},
 		process: {
 			command: stringValue(processConfig.command, defaults.process.command),

@@ -14,12 +14,7 @@
   "output": {
     "maxFinalBytes": 49152,
     "maxStderrBytes": 16384,
-    "maxActivityItems": 200,
-    "collapsedActivityItems": 3,
-    "showToolActivity": true,
-    "showUsage": true,
-    "showElapsed": true,
-    "showExpandHint": true
+    "maxActivityItems": 200
   },
   "process": {
     "command": "pi",

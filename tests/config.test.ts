@@ -28,6 +28,7 @@ describe("configuration", () => {
 		assert.deepEqual(config.tools, ["read", "grep"]);
 		assert.ok(config.profiles.default);
 		assert.equal(config.profiles.custom.model, "openai/test");
+		assert.deepEqual(Object.keys(config.output).sort(), ["maxActivityItems", "maxFinalBytes", "maxStderrBytes"]);
 	});
 
 	it("preserves ordered and repeated CLI extra arguments while deduplicating tool names", () => {
@@ -49,8 +50,8 @@ describe("configuration", () => {
 		const explicitPath = path.join(cwd, "explicit.json");
 		fs.mkdirSync(path.dirname(userPath), { recursive: true });
 		fs.mkdirSync(path.dirname(projectPath), { recursive: true });
-		fs.writeFileSync(userPath, JSON.stringify({ model: "openai/user", output: { showUsage: false } }));
-		fs.writeFileSync(projectPath, JSON.stringify({ effort: "high", output: { showElapsed: false } }));
+		fs.writeFileSync(userPath, JSON.stringify({ model: "openai/user", output: { maxFinalBytes: 2048 } }));
+		fs.writeFileSync(projectPath, JSON.stringify({ effort: "high", output: { maxStderrBytes: 4096 } }));
 		fs.writeFileSync(explicitPath, JSON.stringify({ model: "openai/explicit" }));
 		const loaded = await loadConfig({
 			cwd,
@@ -60,8 +61,8 @@ describe("configuration", () => {
 		});
 		assert.equal(loaded.config.model, "openai/explicit");
 		assert.equal(loaded.config.effort, "high");
-		assert.equal(loaded.config.output.showUsage, false);
-		assert.equal(loaded.config.output.showElapsed, false);
+		assert.equal(loaded.config.output.maxFinalBytes, 2048);
+		assert.equal(loaded.config.output.maxStderrBytes, 4096);
 	});
 
 	it("ignores project configuration when untrusted", async () => {
@@ -85,7 +86,7 @@ describe("configuration", () => {
 		});
 		const saved = JSON.parse(fs.readFileSync(filePath, "utf8"));
 		assert.equal(saved.maxAgents, 7);
-		assert.equal(saved.output.showExpandHint, true);
+		assert.equal(saved.output.maxActivityItems, DEFAULT_CONFIG.output.maxActivityItems);
 	});
 
 	it("patches only quick settings and preserves advanced and unknown fields", async () => {
@@ -105,7 +106,7 @@ describe("configuration", () => {
 				editorMetadata: { folded: true },
 			}),
 		);
-		fs.writeFileSync(projectPath, JSON.stringify({ output: { showElapsed: false } }));
+		fs.writeFileSync(projectPath, JSON.stringify({ output: { maxActivityItems: 321 } }));
 		await saveQuickSettings({ model: "openai/new", effort: "high", tools: ["read", "grep"] }, "user", {
 			cwd,
 			homeDir: home,

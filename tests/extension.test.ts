@@ -1,9 +1,15 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
 import simpleSubagentExtension from "../extensions/subagents.ts";
+import {
+	AGENT_TOOL_DETAILS_KIND,
+	createAgentToolDetails,
+} from "../extensions/subagent/types.ts";
 
 interface RegisteredTool {
 	name: string;
+	renderCall?: unknown;
+	renderResult?: unknown;
 }
 
 const originalChildFlag = process.env.PI_SIMPLE_SUBAGENT_CHILD;
@@ -48,6 +54,19 @@ describe("extension entry point", () => {
 		);
 		assert.deepEqual(harness.commands, ["subagent-config"]);
 		assert.deepEqual(harness.events, ["session_start", "session_shutdown"]);
+		assert.ok(
+			harness.tools.every((tool) => tool.renderCall === undefined && tool.renderResult === undefined),
+			"the orchestration plugin must not own TUI rendering hooks",
+		);
+	});
+
+	it("stamps renderer-neutral details with a stable protocol identifier", () => {
+		assert.deepEqual(createAgentToolDetails({ action: "list", snapshots: [] }), {
+			kind: AGENT_TOOL_DETAILS_KIND,
+			version: 1,
+			action: "list",
+			snapshots: [],
+		});
 	});
 
 	it("does not register orchestration tools inside child Pi processes", () => {
