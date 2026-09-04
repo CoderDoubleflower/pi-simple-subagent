@@ -1,0 +1,238 @@
+name: Reframe renderer-agnostic Codex contract
+
+on:
+  push:
+    branches: [refactor/extract-rendering]
+    paths:
+      - ".github/workflows/reframe-codex-contract-v3.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  rewrite:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+      - name: Remove renderer coupling and keep the Codex contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python <<'PY'
+          from pathlib import Path
+          import json
+          import re
+
+          root = Path.cwd()
+
+          def read(path: str) -> str:
+              return (root / path).read_text(encoding="utf-8")
+
+          def write(path: str, text: str) -> None:
+              (root / path).write_text(text, encoding="utf-8")
+
+          # AgentToolDetails stays useful as ordinary Pi execution metadata, but
+          # it carries no renderer/vendor discriminator.
+          types_path = "extensions/subagent/types.ts"
+          types = read(types_path)
+          start = types.index("export interface AgentToolDetails")
+          end = types.index("\n}\n", start) + 3
+          block = types[start:end]
+          block = re.sub(r'^\s*kind\??:\s*"pi-simple-subagent";\s*\n', '', block, flags=re.M)
+          block = re.sub(r'^\s*version\??:\s*1;\s*\n', '', block, flags=re.M)
+          types = types[:start] + block + types[end:]
+          write(types_path, types)
+
+          entry_path = "extensions/subagents.ts"
+          entry = read(entry_path)
+          entry = re.sub(r'\nconst\s+[A-Z0-9_]+\s*=\s*"pi-simple-subagent"(?:\s+as\s+const)?;\n', '\n', entry)
+          entry = re.sub(
+              r'Omit<AgentToolDetails,\s*"kind"\s*\|\s*"version">',
+              'AgentToolDetails',
+              entry,
+          )
+          entry = re.sub(r'^\s*kind:\s*(?:[A-Z0-9_]+|"pi-simple-subagent"),\s*\n', '', entry, flags=re.M)
+          entry = re.sub(r'^\s*version:\s*1,\s*\n', '', entry, flags=re.M)
+          entry = re.sub(r'return\s*\{\s*\.\.\.details\s*\};', 'return details;', entry, flags=re.S)
+          entry = re.sub(
+              r'return\s*\{(?=[^}]*\.\.\.details)(?=[^}]*version:\s*1)[^}]*\};',
+              'return details;',
+              entry,
+              flags=re.S,
+          )
+          write(entry_path, entry)
+
+          readme_path = "README.md"
+          readme = read(readme_path)
+          readme = readme.replace(
+              "- 通过带版本的结构化 `details` 协议向独立渲染插件暴露状态、活动、统计与最终结果",
+              "- 工具名称、参数与模型可见 JSON 返回值遵循 Codex 多代理工具约定",
+          )
+          readme = re.sub(
+              r'\n本插件不再注册 `renderCall` / `renderResult`。.*?编排和 RPC 能力不受影响。\n',
+              '\n',
+              readme,
+              flags=re.S,
+          )
+          contract_section = '''## Codex 风格工具契约
+
+`pi-simple-subagent` 是独立的 Subagent 编排插件。它只负责创建和管理子 Pi 进程、RPC 生命周期、上下文复用以及模型可见结果，不依赖任何主题或渲染插件。
+
+模型看到的是 Codex 风格的工具集合：
+
+```text
+spawn_agent
+send_input
+wait_agent
+close_agent
+list_agents
+```
+
+主要返回值沿用同一语义：`spawn_agent` 返回 `agent_id` 与 `nickname`，`send_input` 返回 `submission_id`，`wait_agent` 返回按代理键控的 `status`，`close_agent` 返回 `previous_status`，`list_agents` 返回代理列表。插件还会在 Pi 工具结果的普通 `details` 字段中附带无品牌标识的运行快照，用于诊断、日志或任意第三方界面按结构读取；忽略该字段不会影响工具协议和执行行为。
+
+本仓库不包含工具结果的视觉样式，也不会探测、导入或要求安装任何 UI 扩展。界面插件若要定制显示，应根据 Codex 工具名、参数和返回结构进行兼容性匹配。
+'''
+          readme, count = re.subn(
+              r'## 渲染职责与数据协议\n.*?\n## 进程与安全边界',
+              contract_section + '\n## 进程与安全边界',
+              readme,
+              flags=re.S,
+          )
+          if count == 0:
+              # Allow reruns after a partially applied edit.
+              readme = re.sub(
+                  r'## Codex 风格工具契约\n.*?\n## 进程与安全边界',
+                  contract_section + '\n## 进程与安全边界',
+                  readme,
+                  flags=re.S,
+              )
+          readme = '\n'.join(line for line in readme.splitlines() if 'pi-open-tui' not in line) + '\n'
+          write(readme_path, readme)
+
+          package_path = root / "package.json"
+          package = json.loads(package_path.read_text(encoding="utf-8"))
+          package["description"] = "Codex-style background subagents for Pi with unified TUI configuration"
+          package_path.write_text(json.dumps(package, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+          extension_test = '''import assert from "node:assert/strict";
+          import { readFileSync } from "node:fs";
+          import { afterEach, describe, it } from "node:test";
+          import simpleSubagentExtension from "../extensions/subagents.ts";
+
+          interface RegisteredTool {
+          \tname: string;
+          \trenderCall?: unknown;
+          \trenderResult?: unknown;
+          }
+
+          const originalChildFlag = process.env.PI_SIMPLE_SUBAGENT_CHILD;
+
+          afterEach(() => {
+          \tif (originalChildFlag === undefined) delete process.env.PI_SIMPLE_SUBAGENT_CHILD;
+          \telse process.env.PI_SIMPLE_SUBAGENT_CHILD = originalChildFlag;
+          });
+
+          function registrationHarness() {
+          \tconst tools: RegisteredTool[] = [];
+          \tconst commands: string[] = [];
+          \tconst events: string[] = [];
+          \tconst pi = {
+          \t\tregisterTool(tool: RegisteredTool) {
+          \t\t\ttools.push(tool);
+          \t\t},
+          \t\tregisterCommand(name: string) {
+          \t\t\tcommands.push(name);
+          \t\t},
+          \t\ton(name: string) {
+          \t\t\tevents.push(name);
+          \t\t},
+          \t\tgetActiveTools() {
+          \t\t\treturn [];
+          \t\t},
+          \t\tgetAllTools() {
+          \t\t\treturn [];
+          \t\t},
+          \t};
+          \treturn { pi, tools, commands, events };
+          }
+
+          describe("extension entry point", () => {
+          \tit("registers the Codex-style tools and exactly one unified configuration command", () => {
+          \t\tdelete process.env.PI_SIMPLE_SUBAGENT_CHILD;
+          \t\tconst harness = registrationHarness();
+          \t\tsimpleSubagentExtension(harness.pi as never);
+          \t\tassert.deepEqual(
+          \t\t\tharness.tools.map((tool) => tool.name),
+          \t\t\t["spawn_agent", "send_input", "wait_agent", "close_agent", "list_agents"],
+          \t\t);
+          \t\tassert.deepEqual(harness.commands, ["subagent-config"]);
+          \t\tassert.deepEqual(harness.events, ["session_start", "session_shutdown"]);
+          \t\tassert.ok(harness.tools.every((tool) => tool.renderCall === undefined && tool.renderResult === undefined));
+          \t});
+
+          \tit("is renderer-agnostic and does not publish a branded renderer discriminator", () => {
+          \t\tconst source = readFileSync(new URL("../extensions/subagents.ts", import.meta.url), "utf8");
+          \t\tconst types = readFileSync(new URL("../extensions/subagent/types.ts", import.meta.url), "utf8");
+          \t\tassert.doesNotMatch(source, /renderCall|renderResult|pi-open-tui/);
+          \t\tconst detailsBlock = types.slice(
+          \t\t\ttypes.indexOf("export interface AgentToolDetails"),
+          \t\t\ttypes.indexOf("export type AgentWireStatus"),
+          \t\t);
+          \t\tassert.doesNotMatch(detailsBlock, /pi-simple-subagent|\\bkind\\??:|\\bversion\\??:/);
+          \t});
+
+          \tit("does not register orchestration tools inside child Pi processes", () => {
+          \t\tprocess.env.PI_SIMPLE_SUBAGENT_CHILD = "1";
+          \t\tconst harness = registrationHarness();
+          \t\tsimpleSubagentExtension(harness.pi as never);
+          \t\tassert.deepEqual(harness.tools, []);
+          \t\tassert.deepEqual(harness.commands, []);
+          \t\tassert.deepEqual(harness.events, []);
+          \t});
+          });
+          '''
+          extension_test = '\n'.join(line[10:] if line.startswith('          ') else line for line in extension_test.splitlines()) + '\n'
+          write("tests/extension.test.ts", extension_test)
+
+          # Clean all one-shot migration assets from the review branch.
+          migration = root / ".migration"
+          if migration.exists():
+              import shutil
+              shutil.rmtree(migration)
+          workflows = root / ".github" / "workflows"
+          for file in workflows.glob("*.yml"):
+              if file.name != "ci.yml":
+                  file.unlink()
+          for file in workflows.glob("*.yaml"):
+              file.unlink()
+
+          entry = read(entry_path)
+          types = read(types_path)
+          details_start = types.index("export interface AgentToolDetails")
+          details_end = types.index("export type AgentWireStatus", details_start)
+          details_block = types[details_start:details_end]
+          assert "renderCall" not in entry and "renderResult" not in entry
+          assert "pi-open-tui" not in read(readme_path)
+          assert '"pi-simple-subagent"' not in details_block
+          assert not re.search(r'\b(?:kind|version)\??:', details_block)
+          PY
+      - name: Install dependencies
+        run: npm install --ignore-scripts
+      - name: Verify types and tests
+        run: npm run check
+      - name: Replace the PR branch with one clean commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          git reset --soft origin/main
+          git add -A
+          git commit -m "refactor: keep Codex-style subagents renderer-agnostic"
+          git push --force origin HEAD:refactor/extract-rendering

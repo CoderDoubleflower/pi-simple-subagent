@@ -72,23 +72,6 @@
           "type": "integer",
           "minimum": 10,
           "maximum": 5000
-        },
-        "collapsedActivityItems": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 20
-        },
-        "showToolActivity": {
-          "type": "boolean"
-        },
-        "showUsage": {
-          "type": "boolean"
-        },
-        "showElapsed": {
-          "type": "boolean"
-        },
-        "showExpandHint": {
-          "type": "boolean"
         }
       }
     },

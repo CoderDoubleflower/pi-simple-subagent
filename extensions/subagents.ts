@@ -3,17 +3,17 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Type } from "typebox";
 import { AgentManager } from "./subagent/agent-manager.ts";
 import { loadConfig, ORCHESTRATION_TOOLS } from "./subagent/config.ts";
-import { renderSubagentCall, renderSubagentResult } from "./subagent/rendering.ts";
 import { showUnifiedSubagentSettings } from "./subagent/settings-ui.ts";
 import type {
 	AgentSnapshot,
-	AgentToolDetails,
+	AgentToolDetailsPayload,
 	AgentWireStatus,
 	LoadedConfig,
 	ParentDispatchDefaults,
 	SubagentConfig,
 	ThinkingLevel,
 } from "./subagent/types.ts";
+import { createAgentToolDetails } from "./subagent/types.ts";
 
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
@@ -90,8 +90,8 @@ function listSummary(snapshot: AgentSnapshot): Record<string, unknown> {
 	};
 }
 
-function textResult(text: string, details: AgentToolDetails, isError = false) {
-	return { content: [{ type: "text" as const, text }], details, isError };
+function textResult(text: string, details: AgentToolDetailsPayload, isError = false) {
+	return { content: [{ type: "text" as const, text }], details: createAgentToolDetails(details), isError };
 }
 
 export default function simpleSubagentExtension(pi: ExtensionAPI): void {
@@ -174,18 +174,12 @@ export default function simpleSubagentExtension(pi: ExtensionAPI): void {
 					parentDefaults(pi, ctx, current.config),
 					signal,
 				);
-				const details: AgentToolDetails = { action: "spawn", snapshots: [snapshot] };
+				const details: AgentToolDetailsPayload = { action: "spawn", snapshots: [snapshot] };
 				return textResult(JSON.stringify({ agent_id: snapshot.id, nickname: snapshot.taskName }), details);
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
 				return textResult(message, { action: "spawn", snapshots: [], message }, true);
 			}
-		},
-		renderCall(args, theme) {
-			return renderSubagentCall("spawn", args as Record<string, unknown>, theme);
-		},
-		renderResult(result, { expanded, isPartial }, theme) {
-			return renderSubagentResult(result.details as AgentToolDetails | undefined, expanded, theme, isPartial);
 		},
 	});
 
@@ -199,18 +193,12 @@ export default function simpleSubagentExtension(pi: ExtensionAPI): void {
 			try {
 				const current = await ensureManager(ctx);
 				const result = await current.manager.sendInput(params.target, params.message, params.interrupt ?? false, signal);
-				const details: AgentToolDetails = { action: "send", snapshots: [result.snapshot] };
+				const details: AgentToolDetailsPayload = { action: "send", snapshots: [result.snapshot] };
 				return textResult(JSON.stringify({ submission_id: result.submissionId }), details);
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
 				return textResult(message, { action: "send", snapshots: [], message }, true);
 			}
-		},
-		renderCall(args, theme) {
-			return renderSubagentCall("send", args as Record<string, unknown>, theme);
-		},
-		renderResult(result, { expanded, isPartial }, theme) {
-			return renderSubagentResult(result.details as AgentToolDetails | undefined, expanded, theme, isPartial);
 		},
 	});
 
@@ -226,25 +214,19 @@ export default function simpleSubagentExtension(pi: ExtensionAPI): void {
 				const result = await current.manager.wait(params.ids, params.timeout_ms, signal, (snapshots) => {
 					onUpdate?.({
 						content: [{ type: "text", text: "Waiting for subagents…" }],
-						details: { action: "wait", snapshots } satisfies AgentToolDetails,
+						details: createAgentToolDetails({ action: "wait", snapshots }),
 					});
 				});
 				const snapshots = Object.values(result.status).filter((value): value is AgentSnapshot => "id" in value);
 				const status = Object.fromEntries(
 					Object.entries(result.status).map(([target, value]) => [target, "id" in value ? wireStatus(value) : "not_found"]),
 				);
-				const details: AgentToolDetails = { action: "wait", snapshots, timedOut: result.timedOut };
+				const details: AgentToolDetailsPayload = { action: "wait", snapshots, timedOut: result.timedOut };
 				return textResult(JSON.stringify({ status, timed_out: result.timedOut }, null, 2), details);
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
 				return textResult(message, { action: "wait", snapshots: [], message }, true);
 			}
-		},
-		renderCall(args, theme) {
-			return renderSubagentCall("wait", args as Record<string, unknown>, theme);
-		},
-		renderResult(result, { expanded, isPartial }, theme) {
-			return renderSubagentResult(result.details as AgentToolDetails | undefined, expanded, theme, isPartial);
 		},
 	});
 
@@ -269,12 +251,6 @@ export default function simpleSubagentExtension(pi: ExtensionAPI): void {
 				return textResult(message, { action: "close", snapshots: [], message }, true);
 			}
 		},
-		renderCall(args, theme) {
-			return renderSubagentCall("close", args as Record<string, unknown>, theme);
-		},
-		renderResult(result, { expanded, isPartial }, theme) {
-			return renderSubagentResult(result.details as AgentToolDetails | undefined, expanded, theme, isPartial);
-		},
 	});
 
 	pi.registerTool({
@@ -291,12 +267,6 @@ export default function simpleSubagentExtension(pi: ExtensionAPI): void {
 				const message = error instanceof Error ? error.message : String(error);
 				return textResult(message, { action: "list", snapshots: [], message }, true);
 			}
-		},
-		renderCall(args, theme) {
-			return renderSubagentCall("list", args as Record<string, unknown>, theme);
-		},
-		renderResult(result, { expanded, isPartial }, theme) {
-			return renderSubagentResult(result.details as AgentToolDetails | undefined, expanded, theme, isPartial);
 		},
 	});
 }
