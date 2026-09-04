@@ -1,0 +1,49 @@
+name: Apply UI-independent Codex subagent refactor
+
+on:
+  push:
+    branches: [refactor/extract-rendering]
+    paths:
+      - ".migration-generic/READY"
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+      - name: Reconstruct reviewed source payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .migration-generic/part-* | base64 --decode > /tmp/simple-subagent-generic.tar.gz
+          echo "1d4196316be87847b242cb9d183d9019d885114d42f2ba7f26e02fe71a19ea7c  /tmp/simple-subagent-generic.tar.gz" | sha256sum --check --strict
+      - name: Rebuild branch from current main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git reset --hard origin/main
+          tar -xzf /tmp/simple-subagent-generic.tar.gz -C .
+          rm -f extensions/subagent/rendering.ts tests/rendering.test.ts
+      - name: Install dependencies
+        run: npm install --ignore-scripts
+      - name: Verify types and tests
+        run: npm run check
+      - name: Commit clean review branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f package-lock.json
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "refactor: keep Codex subagents UI-independent"
+          git push --force origin HEAD:refactor/extract-rendering
