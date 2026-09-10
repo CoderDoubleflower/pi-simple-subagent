@@ -3,9 +3,10 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { it } from "node:test";
+import { DEFAULT_CONFIG } from "../extensions/subagent/config.ts";
 import { SubagentCoordinator } from "../extensions/subagent/coordinator.ts";
 import { normalizeScopes, canonicalPath } from "../extensions/subagent/ownership.ts";
-import type { AgentSnapshot, SubagentConfig } from "../extensions/subagent/types.ts";
+import type { AgentSnapshot } from "../extensions/subagent/types.ts";
 
 type ManagerPort = ConstructorParameters<typeof SubagentCoordinator>[0];
 
@@ -16,7 +17,7 @@ it("joins cancelled startup cleanup before reusing the task name and write scope
 	let cleaned = false;
 	const snapshots: AgentSnapshot[] = [];
 	const manager: ManagerPort = {
-		config: { defaultProfile: "default", profiles: { default: {} } } as SubagentConfig,
+		config: structuredClone(DEFAULT_CONFIG),
 		subscribe() { return () => {}; },
 		list() { return [...snapshots]; },
 		async spawn(_request, _parent, signal) {
@@ -41,11 +42,11 @@ it("joins cancelled startup cleanup before reusing the task name and write scope
 		const cancellation = coordinator.cancel();
 		manager.spawn = async (request) => {
 			assert.equal(cleaned, true, "replacement started before old startup cleanup finished");
-			const snapshot = { id: "replacement", taskName: request.taskName, profileName: "default", status: "running", activities: [],
+			const snapshot: AgentSnapshot = { id: "replacement", taskName: request.taskName, profileName: "default", status: "running", activities: [],
 				message: request.message, finalOutput: "", stderr: "", tools: [], cwd, startedAt: Date.now(), updatedAt: Date.now(),
 				usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 },
-				display: { showElapsed: true, showToolActivity: false },
-			} as AgentSnapshot;
+				display: { ...DEFAULT_CONFIG.output, showToolActivity: false },
+			};
 			snapshots.push(snapshot); return snapshot;
 		};
 		const replacement = coordinator.spawn({ taskName: "same", message: "new", writeScope: ["src/**"] }, parent);
