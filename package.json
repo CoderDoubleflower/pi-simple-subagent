@@ -1,7 +1,7 @@
 {
   "name": "pi-simple-subagent",
-  "version": "0.2.0",
-  "description": "Codex-style background subagents for Pi, with unified TUI settings and Claude Code-style rendering",
+  "version": "0.3.0",
+  "description": "Background subagents for Pi with verified models, inline status, unified settings and live child-context interaction",
   "type": "module",
   "keywords": [
     "pi-package",
