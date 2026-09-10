@@ -1,12 +1,15 @@
-import type { Theme, ToolRenderContext } from "@earendil-works/pi-coding-agent";
+import type { Theme } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import type { AgentStatus } from "./types.ts";
 import { InlineAgentStore, type InlineAgent } from "./inline-store.ts";
+import { safeText } from "./conversation-mirror.ts";
 
+// Pi 0.84 does not export the full render context type at the package root.
+export interface InlineRenderContext { toolCallId: string; invalidate(): void }
 export type InlineAction = "spawn" | "send" | "wait" | "close" | "list";
 export interface InlineDetails { action: InlineAction; agents: InlineAgent[]; message?: string; timedOut?: boolean }
 export function safeLine(value: unknown, max = 200): string {
-	return (typeof value === "string" ? value : "").replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").replace(/\s+/g, " ").trim().slice(0, max);
+	return safeText(typeof value === "string" ? value : "").replace(/\s+/g, " ").trim().slice(0, max);
 }
 export function elapsed(start: number, end = Date.now()): string {
 	const seconds = Math.max(0, Math.floor((end - start) / 1000));
@@ -18,7 +21,7 @@ export function renderInlineCall(action: InlineAction, args: Record<string, unkn
 	const target = action === "spawn" ? args.task_name : args.target;
 	return new Text(theme.fg("accent", "● ") + theme.fg("toolTitle", theme.bold(title)) + (target ? theme.fg("muted", ` (${safeLine(target, 64)})`) : ""), 0, 0);
 }
-export function renderInlineResult(details: InlineDetails | undefined, partial: boolean, theme: Theme, store?: InlineAgentStore, context?: ToolRenderContext): Text {
+export function renderInlineResult(details: InlineDetails | undefined, partial: boolean, theme: Theme, store?: InlineAgentStore, context?: InlineRenderContext): Text {
 	if (!details) return new Text(theme.fg("dim", "  ⎿  Working…"), 0, 0);
 	const snapshots = Array.isArray(details.agents) ? details.agents : [];
 	if (context && snapshots.length) store?.watch(context.toolCallId, snapshots.map((agent) => agent.id), context.invalidate);

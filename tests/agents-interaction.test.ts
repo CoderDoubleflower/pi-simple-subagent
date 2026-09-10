@@ -4,13 +4,13 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, it } from "node:test";
-import type { Theme, ToolRenderContext } from "@earendil-works/pi-coding-agent";
+import type { Theme } from "@earendil-works/pi-coding-agent";
 import { AgentManager } from "../extensions/subagent/agent-manager.ts";
 import { AgentConversation } from "../extensions/subagent/agent-conversation.ts";
 import { ConversationMirror } from "../extensions/subagent/conversation-mirror.ts";
 import { InteractionGate } from "../extensions/subagent/interaction-gate.ts";
 import { InlineAgentStore, inlineAgent } from "../extensions/subagent/inline-store.ts";
-import { renderInlineCall, renderInlineResult } from "../extensions/subagent/inline-rendering.ts";
+import { renderInlineCall, renderInlineResult, type InlineRenderContext } from "../extensions/subagent/inline-rendering.ts";
 import { DEFAULT_CONFIG, normalizeConfig } from "../extensions/subagent/config.ts";
 import type { AgentSnapshot } from "../extensions/subagent/types.ts";
 
@@ -44,11 +44,10 @@ describe("agents interaction", () => {
 		const pending = assert.rejects(gate.wait(), /closed/); gate.dispose(); await pending;
 		await assert.rejects(gate.wait(), /closed/); assert.throws(() => gate.enter(), /closed/);
 	});
-	it("deduplicates snapshot/event overlap and streams text without exposing thinking/tool bodies", () => {
+	it("deduplicates snapshot/event overlap and streams text without thinking/tool bodies", () => {
 		const mirror = new ConversationMirror();
 		const user = { role: "user", timestamp: 1, content: [{ type: "text", text: "question" }] };
-		mirror.replace([user]); mirror.accept({ type: "message_end", message: user });
-		assert.equal(mirror.messages.length, 1);
+		mirror.replace([user]); mirror.accept({ type: "message_end", message: user }); assert.equal(mirror.messages.length, 1);
 		mirror.accept({ type: "message_update", message: { role: "assistant", timestamp: 2, content: [{ type: "thinking", thinking: "SECRET THINKING" }, { type: "text", text: "streaming" }] } });
 		assert.equal(mirror.messages.length, 2);
 		mirror.accept({ type: "message_end", message: { role: "assistant", timestamp: 2, content: [{ type: "text", text: "finished" }] } });
@@ -65,8 +64,7 @@ describe("agents interaction", () => {
 		await h.manager.wait([s.id], 2000);
 		const view = new AgentConversation(h.manager, (target, text, interrupt) => h.manager.sendInput(target, text, interrupt), () => {});
 		try {
-			await view.select(s.id);
-			assert.match(JSON.stringify(view.mirror.messages), /original context/);
+			await view.select(s.id); assert.match(JSON.stringify(view.mirror.messages), /original context/);
 			await view.send("continue with that context", false); await h.manager.wait([s.id], 2000);
 			assert.match(JSON.stringify(view.mirror.messages), /turn 2: continue with that context/);
 			assert.equal(h.manager.list().length, 1); assert.equal(h.manager.list()[0].id, s.id);
@@ -82,11 +80,10 @@ describe("agents interaction", () => {
 			await h.manager.wait([s.id], 2000);
 			assert.ok(h.commands().some((c) => c.type === "follow_up" && c.message === "queued"));
 			assert.ok(h.commands().some((c) => c.type === "steer" && c.message === "steering"));
-			const history = JSON.stringify(await h.manager.getMessages(s.id));
-			assert.match(history, /queued/); assert.match(history, /steering/);
+			const history = JSON.stringify(await h.manager.getMessages(s.id)); assert.match(history, /queued/); assert.match(history, /steering/);
 		} finally { view.dispose(); }
 	});
-	it("rejects child slash commands and does not route prompts after leaving a context", async () => {
+	it("rejects slash commands and does not route prompts after leaving a context", async () => {
 		const h = fixture(); const s = await h.manager.spawn({ taskName: "commands", message: "first" }, h.parent);
 		const view = new AgentConversation(h.manager, (target, text, interrupt) => h.manager.sendInput(target, text, interrupt), () => {});
 		try {
@@ -96,8 +93,7 @@ describe("agents interaction", () => {
 		} finally { view.dispose(); }
 	});
 	it("discards a stale initial history response after switching views", async () => {
-		let resolve!: (messages: unknown[]) => void;
-		let events = 0, subscriptions = 0;
+		let resolve!: (messages: unknown[]) => void; let events = 0, subscriptions = 0;
 		const manager = { list: () => [snapshot()], subscribe: () => { subscriptions++; return () => { subscriptions--; }; },
 			subscribeEvents: () => { events++; return () => { events--; }; }, getMessages: () => new Promise<unknown[]>((r) => { resolve = r; }) };
 		const view = new AgentConversation(manager, async () => {}, () => {});
@@ -114,9 +110,9 @@ describe("agents interaction", () => {
 			assert.match(renderInlineCall("wait", { message: "SECRET" }, theme).render(80).join("\n"), /Waiting for subagents/);
 		} finally { store.dispose(); }
 	});
-	it("updates an existing transcript row from local events and disposes callbacks", () => {
+	it("updates transcript rows from local events and disposes callbacks", () => {
 		const store = new InlineAgentStore(); const s = snapshot(); store.accept(s); let invalidated = 0;
-		const context = { toolCallId: "call", invalidate() { invalidated++; } } as unknown as ToolRenderContext;
+		const context: InlineRenderContext = { toolCallId: "call", invalidate() { invalidated++; } };
 		renderInlineResult({ action: "spawn", agents: [inlineAgent(s)] }, false, theme, store, context);
 		store.accept({ ...s, status: "completed" }); assert.equal(invalidated, 1);
 		store.dispose(); store.accept(s); assert.equal(invalidated, 1);

@@ -1,5 +1,5 @@
 import { StringEnum } from "@earendil-works/pi-ai";
-import type { ExtensionAPI, ExtensionContext, Theme, ToolRenderContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { AgentManager } from "./subagent/agent-manager.ts";
 import { loadConfig, ORCHESTRATION_TOOLS } from "./subagent/config.ts";
@@ -8,7 +8,7 @@ import { delegationGuidance } from "./subagent/guidance.ts";
 import { showUnifiedSubagentSettings } from "./subagent/settings-ui.ts";
 import { selectDispatchModel } from "./subagent/model-selection.ts";
 import { InlineAgentStore } from "./subagent/inline-store.ts";
-import { renderInlineCall, renderInlineResult, type InlineAction, type InlineDetails } from "./subagent/inline-rendering.ts";
+import { renderInlineCall, renderInlineResult, type InlineAction, type InlineDetails, type InlineRenderContext } from "./subagent/inline-rendering.ts";
 import { InteractionGate } from "./subagent/interaction-gate.ts";
 import { showAgentsView } from "./subagent/agents-view.ts";
 import type { LoadedConfig, ParentDispatchDefaults, SubagentConfig, ThinkingLevel } from "./subagent/types.ts";
@@ -89,7 +89,12 @@ export default function simpleSubagentExtension(pi: ExtensionAPI): void {
 		await teardown(); shutdown = false; lifetime = new AbortController(); gate = new InteractionGate(); store = new InlineAgentStore(); await ensure(ctx);
 	}
 	function details(action: InlineAction, targets?: string[]): InlineDetails {
-		const agents = store.all().filter((agent) => targets ? targets.some((target) => target === agent.id || target === agent.taskName) : agent.status !== "closed");
+		const all = store.all();
+		const agents = targets ? [...new Set(targets)].flatMap((target) => {
+			const key = target.trim();
+			const agent = all.find((candidate) => candidate.id === key) ?? all.findLast((candidate) => candidate.taskName === key);
+			return agent ? [agent] : [];
+		}) : all.filter((agent) => agent.status !== "closed");
 		return { action, agents };
 	}
 	async function run(ctx: ExtensionContext, signal: AbortSignal | undefined, action: InlineAction, targets: string[] | undefined,
@@ -112,8 +117,8 @@ export default function simpleSubagentExtension(pi: ExtensionAPI): void {
 	}
 	function renderers(action: InlineAction) {
 		return { renderShell: "self" as const,
-			renderCall(args: Record<string, unknown>, theme: Theme) { return renderInlineCall(action, args, theme); },
-			renderResult(value: { details?: InlineDetails }, options: { isPartial: boolean }, theme: Theme, context: ToolRenderContext) {
+			renderCall(args: object, theme: Theme) { return renderInlineCall(action, args as Record<string, unknown>, theme); },
+			renderResult(value: { details?: InlineDetails }, options: { isPartial: boolean }, theme: Theme, context: InlineRenderContext) {
 				return renderInlineResult(value.details, options.isPartial, theme, store, context);
 			} };
 	}
@@ -156,10 +161,10 @@ export default function simpleSubagentExtension(pi: ExtensionAPI): void {
 		handler: async (args, ctx) => {
 			if (ctx.mode !== "tui") { ctx.ui.notify("/agents requires an interactive TUI.", "warning"); return; }
 			const current = await ensure(ctx); let release: (() => void) | undefined;
-			const token = epoch;
+			const token = epoch, sessionSignal = lifetime.signal;
 			try {
 				release = current.gate.enter();
-				await showAgentsView(ctx, current.manager, (target, text, interrupt) => current.coordinator.sendInput(target, text, interrupt, lifetime.signal), args, lifetime.signal);
+				await showAgentsView(ctx, current.manager, (target, text, interrupt) => current.coordinator.sendInput(target, text, interrupt, sessionSignal), args, sessionSignal);
 			} catch (error) { if (token === epoch) ctx.ui.notify(error instanceof Error ? error.message : String(error), "error"); }
 			finally {
 				release?.();
