@@ -23,6 +23,7 @@ function aborted(): Error { const error = new Error("Subagent operation cancelle
 export class SubagentCoordinator {
 	private readonly records = new Map<string, RecordState>();
 	private readonly pendingScopes = new Map<string, WriteScope[]>();
+	private readonly starts = new Map<AbortController, Promise<void>>();
 	private readonly parentWrites = new Map<string, WriteScope[]>();
 	private readonly busyAgents = new Set<string>();
 	private readonly waiters = new Set<Waiter>();
@@ -77,10 +78,14 @@ export class SubagentCoordinator {
 		if (this.pendingScopes.has(taskName)) throw new Error(`A subagent named "${taskName}" is already starting.`);
 		this.assertAvailable(scopes);
 		this.pendingScopes.set(taskName, scopes); // Reserve before the asynchronous child startup.
+		const startupAbort = new AbortController();
+		const startupSignal = signal ? AbortSignal.any([signal, startupAbort.signal]) : startupAbort.signal;
+		let finishStartup!: () => void;
+		this.starts.set(startupAbort, new Promise<void>((resolve) => { finishStartup = resolve; }));
 		this.holds++;
 		try {
 			const message = scopes.length ? `${request.message}\n\nOwned write scope: ${describeScopes(scopes).join(", ")}. Modify only files in this scope. Other agents may be working concurrently; do not revert their changes.` : request.message;
-			const snapshot = await this.manager.spawn({ ...request, taskName, profileName, message }, parent, signal);
+			const snapshot = await this.manager.spawn({ ...request, taskName, profileName, message }, parent, startupSignal);
 			if (this.disposed || generation !== this.generation || signal?.aborted) {
 				await this.manager.close(snapshot.id);
 				throw aborted();
@@ -91,7 +96,9 @@ export class SubagentCoordinator {
 			for (const [id, record] of this.records) if (record.snapshot.taskName === taskName && !this.manager.list().some((s) => s.id === id)) this.records.delete(id);
 			throw error;
 		} finally {
-			this.pendingScopes.delete(taskName);
+			if (this.pendingScopes.get(taskName) === scopes) this.pendingScopes.delete(taskName);
+			this.starts.delete(startupAbort);
+			finishStartup();
 			this.holds--;
 			this.changed();
 		}
@@ -200,8 +207,13 @@ export class SubagentCoordinator {
 		for (const waiter of [...this.waiters]) waiter.abort();
 		this.records.clear(); this.pendingScopes.clear(); this.parentWrites.clear();
 		this.changed();
-		const tasks = this.manager.list();
-		this.cancellation = Promise.allSettled(tasks.map((s) => this.manager.close(s.id))).then(() => undefined);
+		// Abort and join startup before closing. Closing a child before start() has
+		// assigned its process handle can otherwise leave an orphan when startup resumes.
+		const starts = [...this.starts];
+		for (const [controller] of starts) controller.abort();
+		this.cancellation = Promise.allSettled(starts.map(([, done]) => done)).then(async () => {
+			await Promise.allSettled(this.manager.list().map((s) => this.manager.close(s.id)));
+		});
 		return this.cancellation;
 	}
 	async dispose(): Promise<void> {

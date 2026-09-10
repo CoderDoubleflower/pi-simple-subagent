@@ -20,7 +20,6 @@ const dirs: string[] = [];
 afterEach(async () => {
 	for (const cleanup of cleanups.splice(0)) await cleanup();
 	if (originalChildFlag === undefined) delete process.env.PI_SIMPLE_SUBAGENT_CHILD; else process.env.PI_SIMPLE_SUBAGENT_CHILD = originalChildFlag;
-	if (originalConfig === undefined) delete process.env.PI_SIMPLE_SUBAGENT_CONFIG; else process.env.PI_SIMPLE_SUBAGENT_CHILD = originalChildFlag;
 	if (originalConfig === undefined) delete process.env.PI_SIMPLE_SUBAGENT_CONFIG; else process.env.PI_SIMPLE_SUBAGENT_CONFIG = originalConfig;
 	for (const dir of dirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
 });

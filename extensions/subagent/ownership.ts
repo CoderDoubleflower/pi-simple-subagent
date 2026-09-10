@@ -26,7 +26,7 @@ export function normalizeScopes(values: readonly string[], cwd: string): WriteSc
 		const value = raw.trim();
 		if (!value) throw new Error("write_scope entries must not be empty.");
 		const treeSuffix = /(?:\/|\\)\*\*$/.test(value);
-		const base = treeSuffix ? value.slice(0, -3) || path.parse(value).root : value;
+		const base = treeSuffix ? value.slice(0, -2) : value;
 		if (/[*?\[\]{}]/.test(base)) {
 			throw new Error("write_scope supports exact files, directories, and a trailing /** only; arbitrary globs are not supported.");
 		}
