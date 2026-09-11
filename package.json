@@ -1,7 +1,7 @@
 {
   "name": "pi-simple-subagent",
-  "version": "0.3.0",
-  "description": "Background subagents for Pi with verified models, inline status, unified settings and live child-context interaction",
+  "version": "0.3.1",
+  "description": "Background subagents for Pi with verified models and effort, inline status, unified settings and native child-context rendering",
   "type": "module",
   "keywords": [
     "pi-package",

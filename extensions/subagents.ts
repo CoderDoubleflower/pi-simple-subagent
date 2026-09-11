@@ -7,6 +7,7 @@ import { SubagentCoordinator, type Completion } from "./subagent/coordinator.ts"
 import { delegationGuidance } from "./subagent/guidance.ts";
 import { showUnifiedSubagentSettings } from "./subagent/settings-ui.ts";
 import { selectDispatchModel } from "./subagent/model-selection.ts";
+import { selectDispatchEffort } from "./subagent/effort-selection.ts";
 import { InlineAgentStore } from "./subagent/inline-store.ts";
 import { renderInlineCall, renderInlineResult, type InlineAction, type InlineDetails, type InlineRenderContext } from "./subagent/inline-rendering.ts";
 import { InteractionGate } from "./subagent/interaction-gate.ts";
@@ -22,7 +23,7 @@ const SpawnParams = Type.Object({
 	agent_type: Type.Optional(Type.String({ description: "Choose from Available subagent profiles. Omit, empty, or whitespace uses defaultProfile." })),
 	write_scope: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { description: "Owned files/directories or trailing /** scopes relative to child cwd. Required for worker. Parallel scopes must be disjoint." })),
 	model: Type.Optional(Type.String({ description: "Normally omit. An explicit user-configured profile/root model takes precedence over this argument. Only used when both are inherit/unset." })),
-	reasoning_effort: Type.Optional(StringEnum(THINKING_LEVELS, { description: "Optional reasoning effort override; normally omit." })),
+	reasoning_effort: Type.Optional(StringEnum(THINKING_LEVELS, { description: "Normally omit. Explicit Profile effort, then root effort, take precedence over this argument, including off. Used only when both inherit or are unset." })),
 	tools: Type.Optional(Type.Array(Type.String(), { description: "Optional child tool allowlist. Empty disables all tools." })),
 	cwd: Type.Optional(Type.String({ description: "Optional child working directory relative to parent cwd, or absolute." })),
 });
@@ -127,8 +128,10 @@ export default function simpleSubagentExtension(pi: ExtensionAPI): void {
 	pi.on("session_tree", async (_event, ctx) => { await start(ctx); });
 	pi.on("before_agent_start", async (event, ctx) => {
 		const current = await ensure(ctx); flushCompletions();
-		const models = Object.fromEntries(Object.keys(current.config.profiles).sort().map((name) => [name, selectDispatchModel(current.config, name).model ?? "inherit"]));
-		return { systemPrompt: `${event.systemPrompt}\n\n${delegationGuidance(current.config)}\nUser-configured child models: ${JSON.stringify(models)}. Explicit profile/root model settings override model-authored spawn_agent.model arguments. Omit model unless the configuration inherits it. Existing agents keep the model selected when they were spawned.` };
+		const names = Object.keys(current.config.profiles).sort();
+		const models = Object.fromEntries(names.map((name) => [name, selectDispatchModel(current.config, name).model ?? "inherit"]));
+		const efforts = Object.fromEntries(names.map((name) => [name, selectDispatchEffort(current.config, name).effort ?? "inherit"]));
+		return { systemPrompt: `${event.systemPrompt}\n\n${delegationGuidance(current.config)}\nUser-configured child models: ${JSON.stringify(models)}. Explicit profile/root model settings override model-authored spawn_agent.model arguments. Omit model unless the configuration inherits it. Existing agents keep the model selected when they were spawned.\nUser-configured child reasoning efforts: ${JSON.stringify(efforts)}. Explicit Profile effort > root effort > spawn_agent.reasoning_effort > parent effort. This includes off. Omit reasoning_effort unless the configuration inherits it. Existing agents retain their original effort.` };
 	});
 	pi.on("context", (event) => {
 		const content = coordinator?.ownershipContext();
@@ -173,30 +176,32 @@ export default function simpleSubagentExtension(pi: ExtensionAPI): void {
 		},
 	});
 	pi.registerTool({ name: "spawn_agent", label: "Spawn agent", ...renderers("spawn"),
-		description: "Delegate an independent bounded task to a background pi RPC child. User-configured model settings take precedence. Do not repeat delegated work; continue non-overlapping work or wait_agent once. Results arrive automatically.",
+		description: "Delegate an independent bounded task to a background pi RPC child. User-configured model and effort settings take precedence. Do not repeat delegated work; continue non-overlapping work or wait_agent once. Results arrive automatically.",
 		promptSnippet: "Delegate an independent bounded task to a background subagent",
-		promptGuidelines: ["For spawn_agent, never repeat a delegated task while its owner runs.", "Provide disjoint write_scope for spawn_agent implementation workers.", "Omit spawn_agent model, reasoning_effort and tools unless needed; explicit model configuration wins."],
+		promptGuidelines: ["For spawn_agent, never repeat a delegated task while its owner runs.", "Provide disjoint write_scope for spawn_agent implementation workers.", "Omit spawn_agent model, reasoning_effort and tools unless needed; explicit model and effort configuration wins."],
 		parameters: SpawnParams,
 		async execute(_id, params, signal, _update, ctx) {
 			return run(ctx, signal, "spawn", [params.task_name.trim().toLowerCase()], async (current) => {
 				const parent = parentDefaults(pi, ctx, current.config);
 				const choice = selectDispatchModel(current.config, params.agent_type, params.model, parent.model);
+				const effort = selectDispatchEffort(current.config, params.agent_type, params.reasoning_effort as ThinkingLevel | undefined, parent.effort);
 				const snapshot = await current.coordinator.spawn({ taskName: params.task_name, message: params.message, profileName: params.agent_type,
-					writeScope: params.write_scope, model: choice.model, effort: params.reasoning_effort as ThinkingLevel | undefined,
+					writeScope: params.write_scope, model: choice.model, effort: effort.effort,
 					tools: params.tools ? params.tools.length ? params.tools : "none" : undefined, cwd: params.cwd }, parent, signal);
 				return { agent_id: snapshot.id, nickname: snapshot.taskName, agent_type: snapshot.profileName, status: snapshot.status,
 					requested_model: choice.model, model: snapshot.model, model_source: choice.source, ignored_model_override: choice.ignoredOverride,
+					requested_effort: effort.effort, reasoning_effort: snapshot.effort, effort_source: effort.source, ignored_effort_override: effort.ignoredOverride,
 					ownership: current.coordinator.list().find((item) => item.agent_id === snapshot.id), instruction: "Task delegated. Do not repeat it. Continue independent work or wait_agent once." };
 			});
 		},
 	});
 	pi.registerTool({ name: "send_input", label: "Message agent", ...renderers("send"),
-		description: "Refine an existing child task. Completed agents retain context. interrupt=true steers a running turn; otherwise queue a follow-up. Original write scope and model still apply.",
+		description: "Refine an existing child task. Completed agents retain context. interrupt=true steers a running turn; otherwise queue a follow-up. Original write scope, model and effort still apply.",
 		parameters: Type.Object({ target: Type.String(), message: Type.String({ minLength: 1 }), interrupt: Type.Optional(Type.Boolean()) }),
 		async execute(_id, params, signal, _update, ctx) {
 			return run(ctx, signal, "send", [params.target], async ({ coordinator }) => {
 				const sent = await coordinator.sendInput(params.target, params.message, params.interrupt ?? false, signal);
-				return { submission_id: sent.submissionId, agent_id: sent.snapshot.id, status: sent.snapshot.status, model: sent.snapshot.model };
+				return { submission_id: sent.submissionId, agent_id: sent.snapshot.id, status: sent.snapshot.status, model: sent.snapshot.model, reasoning_effort: sent.snapshot.effort };
 			});
 		},
 	});

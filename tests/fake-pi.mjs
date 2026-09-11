@@ -37,11 +37,40 @@ function settle() {
 	if (queue.length) runTurn(queue.shift());
 	else emit({ type: "agent_settled" });
 }
+/** Matches Pi toJsonEvent: message_update has neither message nor partial. */
+function runWireTurn(text, currentTurn) {
+	const stamp = ++timestamp, id = `wire-tool-${currentTurn}`;
+	const usage = { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: { total: 0.001 } };
+	const initial = { role: "assistant", content: [], timestamp: stamp, provider: model.provider, model: model.id, usage };
+	emit({ type: "message_start", message: initial });
+	const delta = (type, contentIndex, rest = {}) => emit({ type: "message_update", usage, assistantMessageEvent: { type, contentIndex, ...rest } });
+	delta("thinking_start", 0); delta("thinking_delta", 0, { delta: "Checking the delegated scope." });
+	delta("thinking_end", 0, { content: "Checking the delegated scope." });
+	delta("text_start", 1); delta("text_delta", 1, { delta: "## Findings\n**Live answer**" });
+	delta("text_end", 1, { content: "## Findings\n**Live answer**" });
+	delta("toolcall_start", 2, { id, toolName: "read" });
+	delta("toolcall_delta", 2, { delta: '{"path":"src/' });
+	delta("toolcall_delta", 2, { delta: 'auth.ts"}' });
+	const toolCall = { type: "toolCall", id, name: "read", arguments: { path: "src/auth.ts" } };
+	delta("toolcall_end", 2, { toolCall });
+	activeTimer = setTimeout(() => {
+		activeTimer = null;
+		const message = { ...initial, content: [{ type: "thinking", thinking: "Checking the delegated scope." }, { type: "text", text: "## Findings\n**Live answer**" }, toolCall], stopReason: "stop" };
+		messages.push(message); emit({ type: "message_end", message });
+		emit({ type: "tool_execution_start", toolCallId: id, toolName: "read", args: toolCall.arguments });
+		const result = { content: [{ type: "text", text: "export const authenticated = true;" }], details: { lineCount: 1 }, isError: false };
+		emit({ type: "tool_execution_end", toolCallId: id, toolName: "read", result, isError: false });
+		const toolMessage = { role: "toolResult", toolName: "read", toolCallId: id, timestamp: ++timestamp, ...result };
+		messages.push(toolMessage); emit({ type: "message_end", message: toolMessage });
+		emit({ type: "agent_end", messages: [] }); settle();
+	}, parseDelay(text));
+}
 function runTurn(text) {
 	active = true; turn++; const currentTurn = turn;
 	emit({ type: "agent_start" });
 	const userMessage = { role: "user", content: [{ type: "text", text }], timestamp: ++timestamp };
 	messages.push(userMessage); emit({ type: "message_end", message: userMessage });
+	if (text.includes("[wire-stream]")) { runWireTurn(text, currentTurn); return; }
 	if (text.includes("[invalid-json]")) process.stdout.write("this is not json\n");
 	if (text.includes("[stderr-long]")) process.stderr.write("错".repeat(2000));
 	if (text.includes("[exit]")) { setTimeout(() => process.exit(70), 10); return; }
@@ -75,7 +104,7 @@ rl.on("line", (line) => {
 		case "set_model":
 			if (!models.some((m) => m.provider === command.provider && m.id === command.modelId)) respond(command, false, "Unknown model");
 			else { if (!process.env.FAKE_PI_IGNORE_MODEL_SET) model = { provider: command.provider, id: command.modelId }; respond(command, true, undefined, model); } break;
-		case "set_thinking_level": thinkingLevel = command.level; respond(command); break;
+		case "set_thinking_level": if (!process.env.FAKE_PI_IGNORE_EFFORT_SET) thinkingLevel = command.level; respond(command); break;
 		case "get_state": respond(command, true, undefined, { model, thinkingLevel, isStreaming: active }); break;
 		case "get_messages": respond(command, true, undefined, { messages }); break;
 		case "prompt": case "follow_up": case "steer": {
