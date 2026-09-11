@@ -30,7 +30,10 @@ describe("native child transcript rendering", () => {
 		try {
 			const rendered = h.render();
 			assert.match(rendered, /Important answer/); assert.match(rendered, /Reasoning about the defect/); assert.match(rendered, /const value/);
-			assert.doesNotMatch(rendered, /\*\*Important|```ts/);
+			assert.doesNotMatch(rendered, /\*\*Important/);
+			// Pi may intentionally show code fences. Match the host, not a separate style assumption.
+			const native = new Pi.AssistantMessageComponent(h.mirror.items[1].message as never);
+			assert.ok(rendered.includes(text(native.render(100))), "child assistant block must match the host component output");
 			assert.match(rendered, /printf output/); assert.match(rendered, /output_line_/);
 			h.renderer.toggleTools(); const expanded = h.render();
 			assert.match(expanded, /output_line_0/); assert.match(expanded, /output_line_29/);
