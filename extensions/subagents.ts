@@ -21,7 +21,7 @@ const SpawnParams = Type.Object({
 	task_name: Type.String({ minLength: 1, maxLength: 64, description: "Unique lowercase task name using letters, digits and underscores." }),
 	message: Type.String({ minLength: 1, description: "Bounded, self-contained task, expected deliverable, and necessary context." }),
 	agent_type: Type.Optional(Type.String({ description: "Choose from Available subagent profiles. Omit, empty, or whitespace uses defaultProfile." })),
-	write_scope: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { description: "Owned files/directories or trailing /** scopes relative to child cwd. Required for worker. Parallel scopes must be disjoint." })),
+	write_scope: Type.Optional(Type.Array(Type.String(), { description: "Owned files/directories or trailing /** scopes relative to child cwd. Required for worker. Parallel scopes must be disjoint." })),
 	model: Type.Optional(Type.String({ description: "Normally omit. An explicit user-configured profile/root model takes precedence over this argument. Only used when both are inherit/unset." })),
 	reasoning_effort: Type.Optional(StringEnum(THINKING_LEVELS, { description: "Normally omit. Explicit Profile effort, then root effort, take precedence over this argument, including off. Used only when both inherit or are unset." })),
 	tools: Type.Optional(Type.Array(Type.String(), { description: "Optional child tool allowlist. Empty disables all tools." })),
@@ -118,7 +118,7 @@ export default function simpleSubagentExtension(pi: ExtensionAPI): void {
 	}
 	function renderers(action: InlineAction) {
 		return { renderShell: "self" as const,
-			renderCall(args: object, theme: Theme) { return renderInlineCall(action, args as Record<string, unknown>, theme); },
+			renderCall(args: object, theme: Theme, context: InlineRenderContext) { return renderInlineCall(action, args as Record<string, unknown>, theme, store, context); },
 			renderResult(value: { details?: InlineDetails }, options: { isPartial: boolean }, theme: Theme, context: InlineRenderContext) {
 				return renderInlineResult(value.details, options.isPartial, theme, store, context);
 			} };
