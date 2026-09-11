@@ -106,7 +106,7 @@ describe("agents interaction", () => {
 		try {
 			const details = { action: "wait" as const, agents: [inlineAgent(s)], snapshots: [s] };
 			const text = renderInlineResult(details, true, theme, store).render(160).join("\n");
-			assert.match(text, /Waiting for a new result/); assert.match(text, /Running/); assert.match(text, /p\/child/); assert.doesNotMatch(text, /SECRET/);
+			assert.match(text, /Waiting for a new result/); assert.match(text, /Running/); assert.doesNotMatch(text, /SECRET|p\/child|\d+ tools/);
 			assert.match(renderInlineCall("wait", { message: "SECRET" }, theme).render(80).join("\n"), /Waiting for subagents/);
 		} finally { store.dispose(); }
 	});

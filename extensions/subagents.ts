@@ -118,7 +118,7 @@ export default function simpleSubagentExtension(pi: ExtensionAPI): void {
 	}
 	function renderers(action: InlineAction) {
 		return { renderShell: "self" as const,
-			renderCall(args: object, theme: Theme) { return renderInlineCall(action, args as Record<string, unknown>, theme); },
+			renderCall(args: object, theme: Theme, context: InlineRenderContext) { return renderInlineCall(action, args as Record<string, unknown>, theme, store, context); },
 			renderResult(value: { details?: InlineDetails }, options: { isPartial: boolean }, theme: Theme, context: InlineRenderContext) {
 				return renderInlineResult(value.details, options.isPartial, theme, store, context);
 			} };
