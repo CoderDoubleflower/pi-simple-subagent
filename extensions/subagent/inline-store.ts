@@ -1,12 +1,12 @@
-import type { AgentSnapshot, AgentStatus } from "./types.ts";
+import type { AgentSnapshot, AgentStatus, ThinkingLevel } from "./types.ts";
 
 export interface InlineAgent {
 	id: string; taskName: string; profileName: string; status: AgentStatus;
-	model?: string; startedAt: number; completedAt?: number; toolUses: number;
+	model?: string; effort?: ThinkingLevel; startedAt: number; completedAt?: number; toolUses: number;
 }
 export function inlineAgent(s: AgentSnapshot): InlineAgent {
 	return { id: s.id, taskName: s.taskName, profileName: s.profileName, status: s.status,
-		model: s.model, startedAt: s.startedAt, completedAt: s.completedAt,
+		model: s.model, effort: s.effort, startedAt: s.startedAt, completedAt: s.completedAt,
 		toolUses: s.activities.filter((item) => item.kind === "tool").length };
 }
 const active = (status: AgentStatus) => status === "starting" || status === "running";
