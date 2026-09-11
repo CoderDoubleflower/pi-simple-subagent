@@ -78,7 +78,9 @@ describe("configured models and actual RPC verification", () => {
 		await h.manager.wait([s.id], 2000);
 		await h.manager.sendInput(s.id, "second", false);
 		await h.manager.wait([s.id], 2000);
-		assert.equal(h.commands().filter((c) => c.type === "get_state").length, 2);
+		// Every submitted round verifies both the model and effective reasoning effort.
+		assert.equal(h.commands().filter((c) => c.type === "get_state").length, 4);
+		assert.equal(h.manager.list()[0].effort, "medium");
 	});
 	it("never submits a task when RPC model verification fails", async () => {
 		const h = fixture({ FAKE_PI_START_MODEL: "openai/parent", FAKE_PI_IGNORE_MODEL_SET: "1" });
