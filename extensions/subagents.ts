@@ -10,8 +10,6 @@ import { selectDispatchModel } from "./subagent/model-selection.ts";
 import { selectDispatchEffort } from "./subagent/effort-selection.ts";
 import { InlineAgentStore } from "./subagent/inline-store.ts";
 import { renderInlineCall, renderInlineResult, type InlineAction, type InlineDetails, type InlineRenderContext } from "./subagent/inline-rendering.ts";
-import { InteractionGate } from "./subagent/interaction-gate.ts";
-import { showAgentsView } from "./subagent/agents-view.ts";
 import type { LoadedConfig, ParentDispatchDefaults, SubagentConfig, ThinkingLevel } from "./subagent/types.ts";
 
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
@@ -42,20 +40,13 @@ export default function simpleSubagentExtension(pi: ExtensionAPI): void {
 	let manager: AgentManager | undefined;
 	let coordinator: SubagentCoordinator | undefined;
 	let store = new InlineAgentStore();
-	let gate = new InteractionGate();
-	let lifetime = new AbortController();
 	let unsubscribeUI: (() => void) | undefined;
 	let epoch = 0, shutdown = false;
-	let queuedCompletions: Completion[] = [];
 	const shownDiagnostics = new Set<string>();
 	function publish(results: Completion[]): void {
 		pi.sendMessage({ customType: COMPLETION_MESSAGE, display: false,
 			content: JSON.stringify({ type: "subagent_completion", results, instruction: "Review and integrate these results. Use the newest round if an agent has multiple results. Do not repeat child tasks or print raw child transcripts." }),
 		}, { deliverAs: "steer", triggerTurn: true });
-	}
-	function flushCompletions(): void {
-		if (shutdown || gate.isOpen || !queuedCompletions.length) return;
-		publish(queuedCompletions); queuedCompletions = [];
 	}
 	async function ensure(ctx: ExtensionContext) {
 		const token = epoch;
@@ -67,8 +58,7 @@ export default function simpleSubagentExtension(pi: ExtensionAPI): void {
 			manager = new AgentManager(next.config);
 			coordinator = new SubagentCoordinator(manager, (results) => {
 				if (shutdown || token !== epoch) return;
-				if (gate.isOpen) queuedCompletions.push(...results);
-				else { flushCompletions(); publish(results); }
+				publish(results);
 			});
 			unsubscribeUI = manager.subscribe((snapshot) => store.accept(snapshot));
 		}
@@ -77,17 +67,17 @@ export default function simpleSubagentExtension(pi: ExtensionAPI): void {
 			if (shownDiagnostics.has(key)) continue; shownDiagnostics.add(key);
 			ctx.ui.notify(`${diagnostic.path}: ${diagnostic.message}`, diagnostic.severity === "error" ? "error" : "warning");
 		}
-		return { manager, coordinator: coordinator!, config: next.config, gate, store };
+		return { manager, coordinator: coordinator!, config: next.config, store };
 	}
 	async function teardown() {
-		shutdown = true; epoch++; lifetime.abort(); gate.dispose(); queuedCompletions = [];
+		shutdown = true; epoch++;
 		unsubscribeUI?.(); unsubscribeUI = undefined; store.dispose();
 		const oldCoordinator = coordinator, oldManager = manager;
 		coordinator = undefined; manager = undefined; loaded = undefined;
 		await oldCoordinator?.dispose(); await oldManager?.shutdown();
 	}
 	async function start(ctx: ExtensionContext) {
-		await teardown(); shutdown = false; lifetime = new AbortController(); gate = new InteractionGate(); store = new InlineAgentStore(); await ensure(ctx);
+		await teardown(); shutdown = false; store = new InlineAgentStore(); await ensure(ctx);
 	}
 	function details(action: InlineAction, targets?: string[]): InlineDetails {
 		const all = store.all();
@@ -103,9 +93,11 @@ export default function simpleSubagentExtension(pi: ExtensionAPI): void {
 		const token = epoch;
 		let current: Awaited<ReturnType<typeof ensure>> | undefined;
 		try {
-			await gate.wait(signal); current = await ensure(ctx); flushCompletions();
+			signal?.throwIfAborted();
+			current = await ensure(ctx);
+			signal?.throwIfAborted();
 			const value = await operation(current);
-			await current.gate.wait(signal);
+			signal?.throwIfAborted();
 			if (token !== epoch || shutdown) throw new Error("Parent session changed.");
 			const display = details(action, targets);
 			if (value && typeof value === "object" && "timed_out" in value) display.timedOut = value.timed_out === true;
@@ -127,7 +119,7 @@ export default function simpleSubagentExtension(pi: ExtensionAPI): void {
 	pi.on("session_shutdown", teardown);
 	pi.on("session_tree", async (_event, ctx) => { await start(ctx); });
 	pi.on("before_agent_start", async (event, ctx) => {
-		const current = await ensure(ctx); flushCompletions();
+		const current = await ensure(ctx);
 		const names = Object.keys(current.config.profiles).sort();
 		const models = Object.fromEntries(names.map((name) => [name, selectDispatchModel(current.config, name).model ?? "inherit"]));
 		const efforts = Object.fromEntries(names.map((name) => [name, selectDispatchEffort(current.config, name).effort ?? "inherit"]));
@@ -140,15 +132,14 @@ export default function simpleSubagentExtension(pi: ExtensionAPI): void {
 	});
 	pi.on("tool_call", async (event, ctx) => {
 		try {
-			await gate.wait();
 			const reason = coordinator?.checkParentWrite(event.toolCallId, event.toolName, event.input, ctx.cwd);
 			if (reason) return { block: true, reason };
-		} catch (error) { return { block: true, reason: `Parent tool paused or delegated scope unavailable: ${String(error)}` }; }
+		} catch (error) { return { block: true, reason: `Delegated scope unavailable: ${String(error)}` }; }
 	});
 	pi.on("tool_execution_end", (event) => { coordinator?.finishParentWrite(event.toolCallId); });
 	pi.on("agent_end", async (event) => {
 		const last = event.messages.findLast((message) => message.role === "assistant");
-		if (last?.stopReason === "aborted") { queuedCompletions = []; await coordinator?.cancel(); }
+		if (last?.stopReason === "aborted") await coordinator?.cancel();
 	});
 	pi.registerCommand("subagent-config", {
 		description: "Configure child model, reasoning effort, tools, and save scope in one TUI",
@@ -157,22 +148,6 @@ export default function simpleSubagentExtension(pi: ExtensionAPI): void {
 			loaded = loaded ? { ...loaded, config: saved.config } : loaded; manager?.setConfig(saved.config);
 			ctx.ui.notify(`Saved subagent quick settings to ${saved.path}. Changes apply to newly spawned agents.`, "info");
 			if (loaded?.explicitPath && saved.scope !== "explicit") ctx.ui.notify(`PI_SIMPLE_SUBAGENT_CONFIG is set; ${loaded.explicitPath} remains the highest-priority configuration source.`, "warning");
-		},
-	});
-	pi.registerCommand("agents", {
-		description: "Open a live subagent context and send prompts; optional agent ID or task name",
-		handler: async (args, ctx) => {
-			if (ctx.mode !== "tui") { ctx.ui.notify("/agents requires an interactive TUI.", "warning"); return; }
-			const current = await ensure(ctx); let release: (() => void) | undefined;
-			const token = epoch, sessionSignal = lifetime.signal;
-			try {
-				release = current.gate.enter();
-				await showAgentsView(ctx, current.manager, (target, text, interrupt) => current.coordinator.sendInput(target, text, interrupt, sessionSignal), args, sessionSignal);
-			} catch (error) { if (token === epoch) ctx.ui.notify(error instanceof Error ? error.message : String(error), "error"); }
-			finally {
-				release?.();
-				if (token === epoch) { try { flushCompletions(); } catch { ctx.ui.notify("Completion delivery is pending; it will be retried at the next parent entry point.", "warning"); } }
-			}
 		},
 	});
 	pi.registerTool({ name: "spawn_agent", label: "Spawn agent", ...renderers("spawn"),

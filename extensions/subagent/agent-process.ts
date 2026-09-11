@@ -5,7 +5,6 @@ import * as path from "node:path";
 import { RpcProcess, type ChildEvent } from "./rpc-process.ts";
 import { verifyRpcModel } from "./rpc-model.ts";
 import { verifyRpcEffort } from "./effort-selection.ts";
-import { AssistantStream } from "./assistant-stream.ts";
 import { byteTruncate, emptyUsage, extractText, readUsage, toolSummary } from "./process-formatting.ts";
 import type { AgentSnapshot, AgentStatus, ResolvedAgentSettings, SubagentConfig } from "./types.ts";
 export { byteTruncate } from "./process-formatting.ts";
@@ -16,8 +15,6 @@ const BLOCKING_UI_METHODS = new Set(["select", "confirm", "input", "editor"]);
 export class AgentProcess {
 	private readonly options: AgentProcessOptions;
 	private readonly listeners = new Set<(snapshot: AgentSnapshot) => void>();
-	private readonly eventListeners = new Set<(event: ChildEvent) => void>();
-	private readonly liveStream = new AssistantStream();
 	private rpc?: RpcProcess;
 	private promptTempDir?: string;
 	private snapshotValue: AgentSnapshot;
@@ -37,20 +34,6 @@ export class AgentProcess {
 	get snapshot(): AgentSnapshot { return structuredClone(this.snapshotValue); }
 	subscribe(listener: (snapshot: AgentSnapshot) => void): () => void {
 		this.listeners.add(listener); listener(this.snapshot); return () => { this.listeners.delete(listener); };
-	}
-	/** Only the explicit /agents view receives private child content. */
-	subscribeEvents(listener: (event: ChildEvent) => void): () => void {
-		this.eventListeners.add(listener);
-		// get_messages contains committed messages, not the in-flight response.
-		// Seed late subscribers with everything already received in this stream.
-		if (this.liveStream.message) listener({ type: "message_start", message: structuredClone(this.liveStream.message) });
-		return () => { this.eventListeners.delete(listener); };
-	}
-	async getMessages(signal?: AbortSignal): Promise<unknown[]> {
-		if (!this.rpc) throw new Error("Subagent RPC is unavailable.");
-		const data = await this.rpc.request({ type: "get_messages" }, signal);
-		if (!data || typeof data !== "object" || !Array.isArray((data as { messages?: unknown }).messages)) throw new Error("Child RPC returned an invalid conversation.");
-		return (data as { messages: unknown[] }).messages;
 	}
 	private async verifyModel(signal?: AbortSignal): Promise<void> {
 		const request = (command: Record<string, unknown>, abort?: AbortSignal) => this.rpc!.request(command, abort);
@@ -97,7 +80,7 @@ export class AgentProcess {
 		this.closing = true;
 		this.closePromise = (async () => {
 			await this.rpc?.close(this.options.config.killGraceMs, this.options.config.killForceMs);
-			this.finishActivities(true); this.setStatus("closed"); this.eventListeners.clear(); this.liveStream.reset(); await this.cleanupTempPrompt();
+			this.finishActivities(true); this.setStatus("closed"); await this.cleanupTempPrompt();
 		})();
 		return this.closePromise;
 	}
@@ -119,9 +102,6 @@ export class AgentProcess {
 		return args;
 	}
 	private handleEvent(event: ChildEvent): void {
-		if (event.type === "message_start" || event.type === "message_update") this.liveStream.accept(event);
-		if (event.type === "message_end" && event.message && typeof event.message === "object" && (event.message as { role?: unknown }).role === "assistant") this.liveStream.reset();
-		if (event.type === "agent_settled") this.liveStream.reset();
 		if (event.type === "extension_ui_request" && typeof event.id === "string") {
 			const method = typeof event.method === "string" ? event.method : "unknown";
 			if (BLOCKING_UI_METHODS.has(method)) {
@@ -163,7 +143,6 @@ export class AgentProcess {
 		if (event.type === "agent_settled" && !this.closing) {
 			this.finishActivities(false); this.setStatus(this.lastStopReason === "aborted" ? "interrupted" : this.snapshotValue.error ? "errored" : "completed");
 		}
-		for (const listener of this.eventListeners) { try { listener(event); } catch { /* UI observers cannot interrupt child execution. */ } }
 	}
 	private prepareForTurn(): void {
 		if (this.closing) return;

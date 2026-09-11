@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import * as path from "node:path";
-import { AgentProcess, type ChildEvent } from "./agent-process.ts";
+import { AgentProcess } from "./agent-process.ts";
 import { resolveProfileName } from "./guidance.ts";
 import type { AgentSnapshot, CloseResult, ParentDispatchDefaults, ResolvedAgentSettings, ResolvedToolSelection,
 	SpawnAgentRequest, SubagentConfig, ThinkingLevel, ToolSelection, WaitResult } from "./types.ts";
@@ -41,9 +41,6 @@ export class AgentManager {
 	get config(): SubagentConfig { return this.configValue; }
 	setConfig(config: SubagentConfig): void { this.configValue = config; }
 	subscribe(listener: (snapshot: AgentSnapshot) => void): () => void { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; }
-	/** Access the existing child's actual conversation, not a copied/new parent session. */
-	getMessages(target: string, signal?: AbortSignal): Promise<unknown[]> { return this.require(target).getMessages(signal); }
-	subscribeEvents(target: string, listener: (event: ChildEvent) => void): () => void { return this.require(target).subscribeEvents(listener); }
 
 	async spawn(request: SpawnAgentRequest, parent: ParentDispatchDefaults, signal?: AbortSignal): Promise<AgentSnapshot> {
 		const activeCount = [...this.agents.values()].filter((agent) => agent.snapshot.status !== "closed").length;
