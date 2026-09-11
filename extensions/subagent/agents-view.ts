@@ -1,12 +1,14 @@
 import type { ExtensionContext, KeybindingsManager, Theme } from "@earendil-works/pi-coding-agent";
-import { Editor, Text, matchesKey, truncateToWidth, visibleWidth, type TUI } from "@earendil-works/pi-tui";
+import { Editor, matchesKey, truncateToWidth, visibleWidth, type TUI } from "@earendil-works/pi-tui";
 import { AgentConversation, type SendPrompt } from "./agent-conversation.ts";
+import { ConversationRenderer } from "./conversation-renderer.ts";
 import type { AgentManager } from "./agent-manager.ts";
 import { safeLine } from "./inline-rendering.ts";
 
 export class AgentsView {
 	readonly conversation: AgentConversation;
 	private readonly editor: Editor;
+	private readonly transcript: ConversationRenderer;
 	private readonly tui: TUI;
 	private readonly theme: Theme;
 	private readonly keys: KeybindingsManager;
@@ -14,6 +16,7 @@ export class AgentsView {
 	private readonly drafts = new Map<string, string>();
 	private index = 0;
 	private scroll = 0;
+	private previousBodyLength = 0;
 	private steer = false;
 	private disposed = false;
 	private renderTimer?: ReturnType<typeof setTimeout>;
@@ -21,6 +24,7 @@ export class AgentsView {
 	constructor(tui: TUI, theme: Theme, keys: KeybindingsManager, manager: AgentManager, send: SendPrompt, done: () => void) {
 		this.tui = tui; this.theme = theme; this.keys = keys; this.done = done;
 		this.conversation = new AgentConversation(manager, send, () => this.requestRender());
+		this.transcript = new ConversationRenderer(tui, () => this.requestRender());
 		this.editor = new Editor(tui, {
 			borderColor: (text) => theme.fg("accent", text),
 			selectList: { selectedPrefix: (text) => theme.fg("accent", text), selectedText: (text) => theme.fg("accent", text),
@@ -28,6 +32,7 @@ export class AgentsView {
 		});
 		this.editor.onSubmit = (text) => {
 			const target = this.conversation.selected;
+			this.scroll = 0;
 			void this.conversation.send(text, this.steer).catch((error) => {
 				if (this.disposed || this.conversation.selected !== target) return;
 				this.conversation.info = error instanceof Error ? error.message : String(error);
@@ -39,7 +44,8 @@ export class AgentsView {
 	get focused(): boolean { return this.focus; }
 	set focused(value: boolean) { this.focus = value; this.editor.focused = value && !!this.conversation.selected; }
 	async enter(target: string): Promise<void> {
-		this.saveDraft(); this.editor.setText(""); this.scroll = 0; this.steer = false;
+		this.saveDraft(); this.editor.setText(""); this.scroll = 0; this.previousBodyLength = 0; this.steer = false;
+		this.transcript.reset();
 		const pending = this.conversation.select(target);
 		const id = this.conversation.selected;
 		if (id) this.editor.setText(this.drafts.get(id) ?? "");
@@ -51,8 +57,10 @@ export class AgentsView {
 		if (this.disposed) return;
 		if (matchesKey(data, "ctrl+g") || matchesKey(data, "ctrl+c")) { this.done(); return; }
 		if (this.keys.matches(data, "tui.select.cancel")) {
-			if (this.conversation.selected) { this.saveDraft(); this.conversation.leave(); this.editor.setText(""); this.editor.focused = false; this.scroll = 0; this.requestRender(); }
-			else this.done();
+			if (this.conversation.selected) {
+				this.saveDraft(); this.conversation.leave(); this.transcript.reset(); this.editor.setText("");
+				this.editor.focused = false; this.scroll = 0; this.previousBodyLength = 0; this.requestRender();
+			} else this.done();
 			return;
 		}
 		if (!this.conversation.selected) {
@@ -64,6 +72,8 @@ export class AgentsView {
 		}
 		if (matchesKey(data, "pageUp")) { this.scroll += 8; this.requestRender(); return; }
 		if (matchesKey(data, "pageDown")) { this.scroll = Math.max(0, this.scroll - 8); this.requestRender(); return; }
+		if (matchesKey(data, "ctrl+o")) { this.transcript.toggleTools(); this.previousBodyLength = 0; this.requestRender(); return; }
+		if (matchesKey(data, "alt+t")) { this.transcript.toggleThinking(); this.previousBodyLength = 0; this.requestRender(); return; }
 		if (this.keys.matches(data, "tui.input.tab")) { this.steer = !this.steer; this.requestRender(); return; }
 		this.editor.handleInput(data); this.requestRender();
 	}
@@ -80,39 +90,39 @@ export class AgentsView {
 			const start = Math.max(0, this.index - Math.max(1, height - 7));
 			for (let i = start; i < Math.min(agents.length, start + Math.max(1, height - 5)); i++) {
 				const agent = agents[i];
-				lines.push(t.fg(i === this.index ? "accent" : "text", `${i === this.index ? "›" : " "} ${safeLine(agent.taskName, 64)} · ${safeLine(agent.profileName, 48)} · ${agent.status} · ${safeLine(agent.model, 120)}`));
+				lines.push(t.fg(i === this.index ? "accent" : "text", `${i === this.index ? "›" : " "} ${safeLine(agent.taskName, 64)} · ${safeLine(agent.profileName, 48)} · ${agent.status} · ${safeLine(agent.model, 120)} · Effort: ${agent.effort ?? "default"}`));
 			}
 			if (!agents.length) lines.push(t.fg("dim", "No active agents. Spawn an agent first."));
 			while (lines.length < height - 1) lines.push("");
 			lines.push(t.fg("dim", "↑/↓ Select · Enter Open · Esc Return to parent"));
 		} else {
-			lines.push(t.fg("text", `${safeLine(selected?.taskName ?? this.conversation.selected, 64)} · ${selected?.status ?? "closed"} · ${safeLine(selected?.model, 120)}`));
+			lines.push(t.fg("text", `${safeLine(selected?.taskName ?? this.conversation.selected, 64)} · ${selected?.status ?? "closed"} · ${safeLine(selected?.model, 120)} · Effort: ${selected?.effort ?? "default"}`));
 			lines.push(t.fg("dim", safeLine(this.conversation.info, 240)));
 			const editorLines = this.editor.render(width);
 			const budget = Math.max(0, height - lines.length - editorLines.length - 2);
-			const body: string[] = [];
-			for (const message of this.conversation.mirror.messages) {
-				body.push(t.fg("accent", message.role));
-				body.push(...new Text(message.text, 0, 0).render(width), "");
-			}
+			const body = this.transcript.render(this.conversation.mirror.items, width, selected?.cwd ?? ".");
+			if (this.conversation.mirror.truncated) body.unshift(t.fg("dim", "Earlier display history omitted; child context is unchanged."));
+			if (this.scroll > 0 && this.previousBodyLength > 0) this.scroll += Math.max(0, body.length - this.previousBodyLength);
+			this.previousBodyLength = body.length;
 			this.scroll = Math.min(this.scroll, Math.max(0, body.length - budget));
 			const end = Math.max(0, body.length - this.scroll);
 			const viewport = body.slice(Math.max(0, end - budget), end);
 			while (viewport.length < budget) viewport.unshift("");
 			lines.push(...viewport, t.fg("dim", this.steer ? "Send mode: Steer current work" : "Send mode: Queue follow-up (or start next turn)"), ...editorLines);
-			lines.push(t.fg("dim", "Enter Send · Shift+Enter Newline · Tab Mode · PgUp/PgDn Scroll · Esc Back · Ctrl+G Parent"));
+			lines.push(t.fg("dim", "Enter Send · Tab Mode · Ctrl+O Tools · Alt+T Thinking · PgUp/PgDn Scroll · Esc Back"));
 		}
 		return lines.slice(0, height).map((line) => {
 			const clipped = truncateToWidth(line, width); return clipped + " ".repeat(Math.max(0, width - visibleWidth(clipped)));
 		});
 	}
-	invalidate(): void { this.editor.invalidate(); }
+	invalidate(): void { this.editor.invalidate(); this.transcript.invalidate(); }
 	private requestRender(): void {
 		if (this.disposed || this.renderTimer) return;
 		this.renderTimer = setTimeout(() => { this.renderTimer = undefined; if (!this.disposed) this.tui.requestRender(); }, 50);
 	}
 	dispose(): void {
-		if (this.disposed) return; this.disposed = true; clearTimeout(this.renderTimer); this.conversation.dispose();
+		if (this.disposed) return; this.disposed = true; clearTimeout(this.renderTimer);
+		this.editor.focused = false; this.transcript.dispose(); this.conversation.dispose();
 	}
 }
 
