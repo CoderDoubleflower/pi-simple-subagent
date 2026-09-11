@@ -1,8 +1,8 @@
 # pi-simple-subagent
 
-面向 Pi 的后台子代理插件。每个子代理运行在独立的 `pi --mode rpc --no-session` 进程中，拥有独立上下文，不创建自己的 session 文件；进程存活期间可以继续接收 prompt 并复用上下文。
+面向 Pi 的后台子代理插件。每个子代理运行在独立的 `pi --mode rpc --no-session` 进程中，拥有独立上下文，不创建自己的 session 文件；进程存活期间可以通过主代理的 `send_input` 工具继续任务并复用上下文。
 
-主代理负责拆分、协调、验收和汇总；子代理独立完成被委派的任务。主聊天区显示英文状态卡片，不显示子任务提示词、思考、回复正文或日志。用户可以主动通过 `/agents` 进入子代理视图，查看并继续它自己的对话。
+主代理负责拆分、协调、验收和汇总；子代理在后台独立完成被委派的任务。主聊天区只显示英文派发与等待状态，不显示子任务提示词、思考、回复正文或日志。子任务最终结果仍交给主代理，由主代理汇总给用户。
 
 ## 安装与升级
 
@@ -22,26 +22,17 @@ pi -e git:github.com/CoderDoubleflower/pi-simple-subagent
 pi update git:github.com/CoderDoubleflower/pi-simple-subagent
 ```
 
-更新后重新启动 Pi，并创建新的子代理，以使用修复后的派发规则。固定 tag/commit 的安装需要调整对应 ref；本地目录安装需要同步该目录。本次无需更新 `pi-open-tui`，也不会恢复 spinner 下的子代理面板。
+更新后重新启动 Pi，卸载旧命令与事件处理器，并创建新的子代理。固定 tag/commit 的安装需要调整对应 ref；本地目录安装需要同步该目录。本次无需更新 `pi-open-tui`，无需新增配置文件，也不会恢复 spinner 下的子代理面板。
 
-运行环境：Node.js 22.19 或更高版本，以及支持 RPC 模型选择、`agent_settled` 和公开消息/工具渲染组件的 Pi。开发测试依赖 Pi 0.84.4 系列。
+运行环境：Node.js 22.19 或更高版本，以及支持 RPC 模型/思考强度选择、`agent_settled` 和自定义工具渲染的 Pi。开发测试依赖 Pi 0.84.4 系列。
 
-## 0.3.2 渲染调整
+## 0.3.3：仅保留后台运行
 
-- `Spawn agent` 使用单行标题，括号内为 `profile · task_name · provider/model effort`，不再通过 `⎿` 连接第二行子代理状态。正常派发标题不显示工具数、耗时或额外状态文字。
-- `wait_agent` 保留任务、Profile、状态、耗时与英文等待提示，不显示工具数、provider/model 或 effort。
-- 标题使用实际子代理元数据，不使用已被配置覆盖的原始模型/effort 参数。启动结果返回前先显示可用的 Profile 和任务名；旧历史缺少 effort 时省略，不猜测。窄终端标题截断为单行，错误提示仍然可见。
-- 仅调整主聊天区展示，不改变执行、配置优先级、结果回传或 `/agents` 交互。
-
-## 0.3.1 修复内容
-
-- **Profile effort 优先**：显式 Profile > 显式顶层配置 > 模型生成的 `spawn_agent.reasoning_effort` > 父代理。`off` 也属于显式设置，不是继承。模型生成的参数不能覆盖用户的明确配置。
-- 提交 prompt 前回读子 RPC 的实际 `thinkingLevel`；不一致时明确报错，不带着错误的强度继续运行。`/agents` 的列表和对话标题显示实际 effort。
-- 修复新版 Pi RPC `message_update` 只有 `assistantMessageEvent` 增量、没有完整 `message`/`partial` 时正文与思考丢失的问题，同时兼容旧版累积快照。
-- 运行中途进入 `/agents` 时，补上该子进程已经收到的当前流内容；历史和缓冲事件重叠时，不重复消息，也不把完整消息覆盖成旧的半截输出。
-- `/agents` 使用宿主 Pi 的 `UserMessageComponent`、`AssistantMessageComponent`、`ToolExecutionComponent`，而非简化纯文本列表。Markdown、代码块、思考、工具参数和结果都交给相应组件渲染；启用的 `pi-open-tui` 对这些共享组件的样式修改也会作用于子视图。
-- 子视图增加 `Ctrl+O` 工具展开/折叠、`Alt+T` 思考显示/隐藏；思考默认显示。只显示供应商实际返回的可展示思考文本，不解密或展示签名、加密推理数据。
-- 保留主聊天区英文内联状态、默认持续等待、结果去重、任务归属与写入冲突检查。子对话正文仍不会直接出现在主聊天区。
+- 移除 `/agents` 命令及子代理交互视图，不再提供进入子上下文查看或直接发送 prompt 的界面。
+- 删除交互视图使用的对话镜像、流式重建缓存、私有消息订阅和历史读取接口，不再为查看子会话维护这些状态。
+- 移除进入子视图时暂停主代理工具、暂存完成通知的逻辑。完成结果由后台协调器直接按原来的去重规则交付；任务归属和写入冲突检查仍然有效。
+- 保留五个模型工具、`/subagent-config` 统一配置入口、Profile 模型/effort 优先级及实际 RPC 回读校验。
+- 保留 0.3.2 的单行 `Spawn agent` 与精简 `wait_agent` 展示。删除界面中指向已移除命令的提示。
 
 ## 模型与思考强度选择
 
@@ -73,7 +64,7 @@ pi update git:github.com/CoderDoubleflower/pi-simple-subagent
 
 收到 assistant 完整响应后，还会记录响应声明的 provider/model；与已验证模型不同时报告错误。子代理自己的模型和 effort 设置不改写父会话或全局默认值。
 
-**配置改变仅影响新创建的子代理。**已有子代理及其后续 `send_input`、`/agents` 对话保留创建时的模型、effort 和写入范围。继续一个已完成子代理时，会重新设置并核验它原来的模型和 effort。需要更换时关闭并重新派发。
+**配置改变仅影响新创建的子代理。**已有子代理及其后续 `send_input` 保留创建时的模型、effort 和写入范围。继续一个已完成子代理时，会重新设置并核验它原来的模型和 effort。需要更换时关闭并重新派发。
 
 模型工具返回 `requested_model`、`model`、`model_source`、`ignored_model_override`；思考强度对应 `requested_effort`、`reasoning_effort`、`effort_source`、`ignored_effort_override`，用于诊断选择来源与被忽略的模型参数。工具 allowlist 的覆盖顺序不变：单次参数 > Profile > 顶层配置 > 父代理。
 
@@ -124,7 +115,7 @@ pi update git:github.com/CoderDoubleflower/pi-simple-subagent
 {"target":"inspect_api","message":"继续检查第二个问题。","interrupt":false}
 ```
 
-已完成、失败或中断的代理开始下一轮 RPC prompt；运行中 `interrupt=false` 排队 follow-up，`interrupt=true` 发送 steer。继续已完成代理前重新检查原范围是否被占用。prompt 被拒绝时恢复上一轮状态和交付标记。
+这是主代理调用的编排工具，不是用户进入子代理的交互命令。已完成、失败或中断的代理开始下一轮 RPC prompt；运行中 `interrupt=false` 排队 follow-up，`interrupt=true` 发送 steer。继续已完成代理前重新检查原范围是否被占用。prompt 被拒绝时恢复上一轮状态和交付标记。
 
 ### wait_agent
 
@@ -154,45 +145,13 @@ pi update git:github.com/CoderDoubleflower/pi-simple-subagent
   ⎿  Waiting for a new result…
 ```
 
-`Spawn agent` 的信息全部放在单行括号内，不再有 `⎿` 子行；正常标题只包含 Profile、任务名、实际模型和 effort。完成时圆点变为成功颜色，启动失败或任务失败仍显示英文错误提示。旧历史没有保存 effort 时省略该字段，不借用主代理传入的参数。窄屏标题按终端宽度截断，可通过 `/agents` 查看详情。
+`Spawn agent` 的信息全部放在单行括号内，不再有 `⎿` 子行；正常标题只包含 Profile、任务名、实际模型和 effort。完成时圆点变为成功颜色，启动失败或任务失败仍显示英文错误提示。旧历史没有保存 effort 时省略该字段，不借用主代理传入的参数。窄屏标题按终端宽度截断。
 
-`wait_agent` 只保留 Profile、任务名、状态和耗时，不显示工具数、provider/model 或 effort。状态和耗时本地刷新，不产生额外模型轮询；等待期间、完成和显式超时分别保留相应英文提示。`send_input`、`close_agent`、`list_agents` 的展示不变。
+`wait_agent` 只保留 Profile、任务名、状态和耗时，不显示工具数、provider/model 或 effort。状态和耗时本地刷新，不产生额外模型轮询；等待期间、完成和显式超时分别保留相应英文提示。`send_input`、`close_agent`、`list_agents` 的展示不变，超出可见数量时仅提示剩余条数。
 
-普通/展开模式都不显示子任务 Prompt、Response、思考、原始工具参数或 stderr。旧会话已经保存的详情不会被升级从磁盘擦除，但主工具渲染不展示它们。
+普通/展开模式都不显示子任务 Prompt、Response、思考、原始工具参数或 stderr。旧会话已经保存的详情不会被升级从磁盘擦除，但主工具渲染不展示它们。隐藏展示不等于删除父会话结果：父模型收到的最终结果和隐藏通知仍可能随父会话持久化。
 
-隐藏展示不等于删除父会话结果：父模型收到的最终结果和隐藏通知仍可能随父会话持久化。
-
-## /agents：进入子代理上下文
-
-```text
-/agents
-/agents inspect_api
-/agents agent_0123456789abcdef
-```
-
-不带参数打开列表；带任务名或 ID 直接进入。界面显示用户消息、供应商返回的可展示思考、assistant 正文和工具调用/结果，支持实时流式刷新。进入正在输出的子代理时，会显示已经收到的当前流内容，不必等下一条完整消息。工具参数、输出与差异详情通过宿主工具渲染器呈现，不再只有工具名称。
-
-子对话复用当前 Pi 的原生消息与工具组件。启用的 `pi-open-tui` 对这些共享组件的 Markdown、思考前缀、工具结果与 diff 样式也会作用于子视图；没有启用该插件时使用 Pi 原生样式。子进程独有的任意第三方自定义 renderer 不会跨 RPC 序列化到父进程，未被宿主识别的工具使用通用渲染。这不是第二个完整原生 Pi 会话界面。
-
-显示缓存有条数和大小上限；裁剪只影响视图，**不会截断子模型真实上下文**。原始进程日志、图片载荷和推理签名不展示。
-
-| 按键 | 行为 |
-|---|---|
-| 列表 ↑/↓、Enter | 选择并进入代理 |
-| Enter | 发送 prompt |
-| Shift+Enter | 换行（取决于终端键盘协议） |
-| Tab | 切换 Queue follow-up / Steer current work |
-| Ctrl+O | 展开/折叠工具结果 |
-| Alt+T | 显示/隐藏思考块，默认显示 |
-| PgUp / PgDn | 滚动子对话 |
-| Esc | 子对话返回列表；列表返回父界面 |
-| Ctrl+G / Ctrl+C | 返回父界面，不关闭子代理 |
-
-子代理运行中，Queue 把提示排到后续任务，Steer 在子代理可处理的工具边界重定向工作，不是立即杀死进程。已完成时发送 prompt 会在同一上下文开始下一轮。原模型、effort 和 write_scope 仍然适用。
-
-打开视图期间，**主代理后续的工具调用边界会暂缓**，已经执行中的工具或模型流不强制中断。完成通知暂存到退出视图后投递，减少用户与主代理同时操作子任务的冲突。返回后主流程继续；子代理进程不会因为视图关闭而结束。
-
-暂不支持子代理 slash command、图片输入或扩展交互弹窗。RPC/无头父进程不能打开该视图。父进程关闭、会话切换或取消任务仍会清理子代理，不能在父进程退出后恢复这份上下文。
+后台运行不等于脱离父进程常驻：父 Pi 关闭、会话切换或取消任务仍会清理子代理；父进程退出后不能恢复这份子上下文。
 
 ## 唯一配置入口
 
@@ -200,7 +159,7 @@ pi update git:github.com/CoderDoubleflower/pi-simple-subagent
 /subagent-config
 ```
 
-模型、effort、工具与保存范围集中配置；`/agents` 是运行中交互入口，不是第二套配置界面。配置面板支持模型继承、已认证模型选择、手工 provider/model，以及工具继承/禁用/allowlist。
+模型、effort、工具与保存范围集中配置。配置面板支持模型继承、已认证模型选择、手工 provider/model，以及工具继承/禁用/allowlist。
 
 ↑/↓ 移动，Enter 编辑，Space 切换工具，Tab 切换保存范围，S 保存，R 重置快捷字段为 inherit，Esc 返回。保存只修改选中配置层的 model、effort、tools，保留 process、Profile、超时和未知编辑器元数据。
 
@@ -229,7 +188,7 @@ pi update git:github.com/CoderDoubleflower/pi-simple-subagent
 | `process.excludeTools` | 子代理工具排除列表 |
 | `process.approveProject` | inherit / always / never，控制项目批准继承 |
 
-子进程设置 `PI_SIMPLE_SUBAGENT_CHILD=1`，不再次注册编排工具或 `/agents`；默认 excludeTools 是另一层递归保护。非交互子进程的阻塞扩展 UI 请求自动取消，普通通知不会被误判为阻塞。
+子进程设置 `PI_SIMPLE_SUBAGENT_CHILD=1`，不再次注册编排工具或配置命令；默认 excludeTools 是另一层递归保护。非交互子进程的阻塞扩展 UI 请求自动取消，普通通知不会被误判为阻塞。
 
 ## 开发与验证
 
@@ -240,7 +199,7 @@ npm test
 npm run check
 ```
 
-测试包括模型/effort 的配置优先级与实际 RPC 回读、`off` 保护、拒绝不一致配置下提交任务、旧代理续聊与新配置隔离、RPC 增量文本/思考/工具重建、中途进入与历史去重、原生组件渲染与工具展开、任务归属、结果去重、持续等待、主聊天区隔离、queue/steer、视图生命周期、焦点、窄终端和 UTF-8 处理。RPC 集成测试使用模拟 Pi 子进程，不调用真实模型服务。
+测试包括后台命令与模块清理、模型/effort 配置优先级与实际 RPC 回读、`off` 保护、拒绝不一致配置下提交任务、旧代理续聊与新配置隔离、无对话镜像时的 RPC 最终结果提取、任务归属、结果去重、无需轮询的完成通知、持续等待、取消与会话切换清理、主聊天区隔离、程序化 queue/steer、单行派发与精简等待渲染、控制字符和 UTF-8 处理。RPC 集成测试使用模拟 Pi 子进程，不调用真实模型服务。
 
 ## License
 

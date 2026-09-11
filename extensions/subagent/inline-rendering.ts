@@ -1,8 +1,8 @@
+import { stripVTControlCharacters } from "node:util";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { Text, truncateToWidth, type Component } from "@earendil-works/pi-tui";
 import type { AgentStatus } from "./types.ts";
 import { InlineAgentStore, type InlineAgent } from "./inline-store.ts";
-import { safeText } from "./conversation-mirror.ts";
 
 // Pi 0.84 does not export the full render context type at the package root.
 export interface InlineRenderContext {
@@ -14,7 +14,9 @@ export interface InlineRenderContext {
 export type InlineAction = "spawn" | "send" | "wait" | "close" | "list";
 export interface InlineDetails { action: InlineAction; agents: InlineAgent[]; message?: string; timedOut?: boolean }
 export function safeLine(value: unknown, max = 200): string {
-	return safeText(typeof value === "string" ? value : "").replace(/\s+/g, " ").trim().slice(0, max);
+	return stripVTControlCharacters(typeof value === "string" ? value : "")
+		.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, "").slice(0, 32768)
+		.replace(/\s+/g, " ").trim().slice(0, max);
 }
 export function elapsed(start: number, end = Date.now()): string {
 	const seconds = Math.max(0, Math.floor((end - start) / 1000));
@@ -81,7 +83,7 @@ export function renderInlineResult(details: InlineDetails | undefined, partial: 
 		return theme.fg("dim", "  ⎿  ") + theme.fg(color, `${safeLine(agent.profileName, 48)} · ${safeLine(agent.taskName, 64)} · ${labels[agent.status] ?? "Unknown"}`)
 			+ theme.fg("dim", ` · ${elapsed(agent.startedAt, agent.completedAt)}${extra}`);
 	});
-	if (agents.length > 8) lines.push(theme.fg("dim", `     +${agents.length - 8} more · /agents to inspect`));
+	if (agents.length > 8) lines.push(theme.fg("dim", `     +${agents.length - 8} more`));
 	if (details.message) lines.push(theme.fg("error", `  ⎿  ${safeLine(details.message)}`));
 	else if (details.action === "wait") lines.push(theme.fg("dim", partial ? "  ⎿  Waiting for a new result…" : details.timedOut ? "  ⎿  Still running · wait deadline reached" : "  ⎿  Wait finished"));
 	else if (!lines.length) lines.push(theme.fg("dim", "  ⎿  No active agents"));

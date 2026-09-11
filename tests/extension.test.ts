@@ -48,17 +48,27 @@ function setup(overrides: Record<string, unknown> = {}) {
 	const h = harness(); simpleSubagentExtension(h.pi as never);
 	const notices: string[] = [];
 	const ctx = { cwd: dir, hasUI: false, mode: "rpc", isProjectTrusted: () => true,
-		model: { provider: "openai", id: "parent-model" }, ui: { notify(text: string) { notices.push(text); }, setWidget() { assert.fail("Must not mount a spinner panel"); } }, thinkingLevel: "medium" } as unknown as ExtensionContext;
+		model: { provider: "openai", id: "parent-model" }, ui: {
+			notify(text: string) { notices.push(text); },
+			setWidget() { assert.fail("Must not mount a spinner panel"); },
+			custom() { assert.fail("Background agents must not open an interactive view"); },
+		}, thinkingLevel: "medium" } as unknown as ExtensionContext;
 	const hook = async (name: string, event: unknown = {}) => h.hooks.get(name)?.(event as never, ctx);
 	cleanups.push(async () => { await hook("session_shutdown"); });
-	const call = async (name: string, params: Record<string, unknown>, update?: (result: unknown) => void) => h.tools.find((tool) => tool.name === name)!.execute(name, params, undefined, update, ctx);
+	const call = async (name: string, params: Record<string, unknown>, update?: (result: unknown) => void, signal?: AbortSignal) => h.tools.find((tool) => tool.name === name)!.execute(name, params, signal, update, ctx);
 	return { ...h, ctx, hook, call, dir, notices };
 }
+async function until(predicate: () => boolean): Promise<void> {
+	const deadline = Date.now() + 3000;
+	while (!predicate() && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
+	assert.ok(predicate(), "Expected background completion within the test deadline");
+}
 describe("extension entry point", () => {
-	it("registers inline English tools, one configuration command, and the agents view", () => {
+	it("registers inline English tools and only the unified configuration command", () => {
 		delete process.env.PI_SIMPLE_SUBAGENT_CHILD; const h = harness(); simpleSubagentExtension(h.pi as never);
 		assert.deepEqual(h.tools.map((tool) => tool.name), ["spawn_agent", "send_input", "wait_agent", "close_agent", "list_agents"]);
-		assert.deepEqual(h.commands, ["subagent-config", "agents"]);
+		assert.deepEqual(h.commands, ["subagent-config"]);
+		assert.equal(h.commandHandlers.has("agents"), false);
 		for (const hook of ["session_start", "session_shutdown", "session_tree", "before_agent_start", "context", "tool_call", "tool_execution_end", "agent_end"]) assert.ok(h.hooks.has(hook));
 		for (const tool of h.tools) { assert.equal(tool.renderShell, "self"); assert.ok(tool.renderCall({}, theme).render(80).length > 0); }
 		assert.match(h.tools.find((tool) => tool.name === "wait_agent")!.renderCall({}, theme).render(80).join("\n"), /Waiting for subagents/);
@@ -105,8 +115,64 @@ describe("extension entry point", () => {
 		assert.match(rendered, /Completed/); assert.doesNotMatch(rendered, /private child task/);
 		assert.deepEqual(JSON.parse((await h.call("wait_agent", { ids: [id] })).content[0].text).results, []);
 	});
-	it("does not open the interactive agents view for an RPC parent", async () => {
-		const h = setup(); await h.hook("session_start"); await h.commandHandlers.get("agents")!("", h.ctx);
-		assert.match(h.notices.join("\n"), /requires an interactive TUI/);
+	it("does not register or advertise an agents command in TUI or RPC mode", async () => {
+		const h = setup(); await h.hook("session_start");
+		const tuiCtx = { ...h.ctx, mode: "tui", hasUI: true } as ExtensionContext;
+		await h.hooks.get("session_start")!({} as never, tuiCtx);
+		assert.deepEqual(h.commands, ["subagent-config"]);
+		assert.equal(h.commandHandlers.get("agents"), undefined);
+		const response = await h.hooks.get("before_agent_start")!({ systemPrompt: "BASE" } as never, tuiCtx) as { systemPrompt: string };
+		assert.doesNotMatch(response.systemPrompt, /\/agents\b/);
+	});
+	it("delivers background results exactly once without a view, wait or status polling", async () => {
+		const h = setup(); await h.hook("session_start");
+		const spawned = await h.call("spawn_agent", { task_name: "automatic", message: "automatic result [delay=50]" });
+		assert.equal(spawned.isError, false, spawned.content[0].text);
+		await until(() => h.messages.length > 0);
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		assert.equal(h.messages.length, 1); assert.equal(h.messages[0].display, false);
+		const notification = JSON.parse(String(h.messages[0].content));
+		assert.equal(notification.results[0].agent_id, JSON.parse(spawned.content[0].text).agent_id);
+		assert.equal(notification.results[0].output, "turn 1: automatic result [delay=50]");
+	});
+	it("does not pause independent parent tools while preserving delegated write conflicts", { timeout: 5000 }, async () => {
+		const h = setup(); await h.hook("session_start");
+		const spawned = await h.call("spawn_agent", { task_name: "owned", message: "[delay=2000]", agent_type: "worker", write_scope: ["src/owned/**"] });
+		assert.equal(spawned.isError, false, spawned.content[0].text);
+		assert.equal(await h.hook("tool_call", { toolCallId: "read", toolName: "read", input: { path: "src/owned/a.ts" } }), undefined);
+		assert.equal(await h.hook("tool_call", { toolCallId: "independent", toolName: "write", input: { path: "src/other.ts", content: "ok" } }), undefined);
+		await h.hook("tool_execution_end", { toolCallId: "independent" });
+		const conflict = await h.hook("tool_call", { toolCallId: "conflict", toolName: "write", input: { path: "src/owned/a.ts", content: "no" } }) as { block?: boolean };
+		assert.equal(conflict.block, true);
+	});
+	it("keeps cancellation effective after removing the interaction gate", async () => {
+		const h = setup(); await h.hook("session_start");
+		const spawned = await h.call("spawn_agent", { task_name: "cancelled", message: "[delay=2000]" });
+		assert.equal(spawned.isError, false, spawned.content[0].text);
+		const id = JSON.parse(spawned.content[0].text).agent_id;
+		const abort = new AbortController(); let ready!: () => void;
+		const started = new Promise<void>((resolve) => { ready = resolve; });
+		const pending = h.call("wait_agent", { ids: [id] }, () => ready(), abort.signal);
+		await started; abort.abort();
+		assert.equal((await pending).isError, true);
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		assert.equal(h.messages.length, 0);
+		const cancelled = await h.call("spawn_agent", { task_name: "must_not_start", message: "no" }, undefined, abort.signal);
+		assert.equal(cancelled.isError, true);
+		assert.deepEqual(JSON.parse((await h.call("list_agents", {})).content[0].text).agents, []);
+	});
+	it("cleans pending waits and prevents old completions leaking across sessions", async () => {
+		const h = setup(); await h.hook("session_start");
+		const spawned = await h.call("spawn_agent", { task_name: "old", message: "[delay=2000]" });
+		assert.equal(spawned.isError, false, spawned.content[0].text);
+		let ready!: () => void; const started = new Promise<void>((resolve) => { ready = resolve; });
+		const pending = h.call("wait_agent", { ids: [JSON.parse(spawned.content[0].text).agent_id] }, () => ready());
+		await started; await h.hook("session_tree");
+		assert.equal((await pending).isError, true); assert.equal(h.messages.length, 0);
+		const fresh = await h.call("spawn_agent", { task_name: "fresh", message: "new session" });
+		assert.equal(fresh.isError, false, fresh.content[0].text);
+		await until(() => h.messages.length > 0);
+		assert.equal(h.messages.length, 1);
+		assert.equal(JSON.parse(String(h.messages[0].content)).results[0].task_name, "fresh");
 	});
 });
