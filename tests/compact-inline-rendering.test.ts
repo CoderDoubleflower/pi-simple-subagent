@@ -78,7 +78,9 @@ describe("compact inline subagent rendering", () => {
 		for (const width of [0, 1, 12, 32, 80, 160]) {
 			const lines = component.render(width); assert.equal(lines.length, width ? 1 : 0);
 			assert.ok(lines.every((line) => visibleWidth(line) <= width));
-			assert.doesNotMatch(lines.join(""), /\u001b|\n|⎿/);
+			// Pi adds safe SGR resets around its truncation marker. No other
+			// escape sequence, including the injected foreground color, may survive.
+			assert.doesNotMatch(lines.join("").replace(/\u001b\[0m/g, ""), /\u001b|\n|⎿/);
 		}
 	});
 	it("omits model, effort and tool counts from partial, finished and timed-out wait rows", () => {
