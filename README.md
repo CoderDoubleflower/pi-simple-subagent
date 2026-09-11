@@ -26,6 +26,13 @@ pi update git:github.com/CoderDoubleflower/pi-simple-subagent
 
 运行环境：Node.js 22.19 或更高版本，以及支持 RPC 模型选择、`agent_settled` 和公开消息/工具渲染组件的 Pi。开发测试依赖 Pi 0.84.4 系列。
 
+## 0.3.2 渲染调整
+
+- `Spawn agent` 使用单行标题，括号内为 `profile · task_name · provider/model effort`，不再通过 `⎿` 连接第二行子代理状态。正常派发标题不显示工具数、耗时或额外状态文字。
+- `wait_agent` 保留任务、Profile、状态、耗时与英文等待提示，不显示工具数、provider/model 或 effort。
+- 标题使用实际子代理元数据，不使用已被配置覆盖的原始模型/effort 参数。启动结果返回前先显示可用的 Profile 和任务名；旧历史缺少 effort 时省略，不猜测。窄终端标题截断为单行，错误提示仍然可见。
+- 仅调整主聊天区展示，不改变执行、配置优先级、结果回传或 `/agents` 交互。
+
 ## 0.3.1 修复内容
 
 - **Profile effort 优先**：显式 Profile > 显式顶层配置 > 模型生成的 `spawn_agent.reasoning_effort` > 父代理。`off` 也属于显式设置，不是继承。模型生成的参数不能覆盖用户的明确配置。
@@ -140,15 +147,18 @@ pi update git:github.com/CoderDoubleflower/pi-simple-subagent
 ## 主聊天区渲染
 
 ```text
-● Spawn agent (inspect_api)
-  ⎿  explorer · inspect_api · Running · 42s · 6 tools · provider/child-model
+● Spawn agent (explorer · pi_plugin_sources · sub2api/gpt-5.6-luna max)
 
 ● Waiting for subagents
-  ⎿  explorer · inspect_api · Running · 42s · 6 tools · provider/child-model
+  ⎿  explorer · pi_plugin_sources · Running · 42s
   ⎿  Waiting for a new result…
 ```
 
-状态和耗时本地刷新，不产生额外模型轮询。完成后变为 `Completed`、出错为 `Failed`。普通/展开模式都不显示子任务 Prompt、Response、思考、原始工具参数或 stderr。旧会话已经保存的详情不会被升级从磁盘擦除，但主工具渲染不展示它们。
+`Spawn agent` 的信息全部放在单行括号内，不再有 `⎿` 子行；正常标题只包含 Profile、任务名、实际模型和 effort。完成时圆点变为成功颜色，启动失败或任务失败仍显示英文错误提示。旧历史没有保存 effort 时省略该字段，不借用主代理传入的参数。窄屏标题按终端宽度截断，可通过 `/agents` 查看详情。
+
+`wait_agent` 只保留 Profile、任务名、状态和耗时，不显示工具数、provider/model 或 effort。状态和耗时本地刷新，不产生额外模型轮询；等待期间、完成和显式超时分别保留相应英文提示。`send_input`、`close_agent`、`list_agents` 的展示不变。
+
+普通/展开模式都不显示子任务 Prompt、Response、思考、原始工具参数或 stderr。旧会话已经保存的详情不会被升级从磁盘擦除，但主工具渲染不展示它们。
 
 隐藏展示不等于删除父会话结果：父模型收到的最终结果和隐藏通知仍可能随父会话持久化。
 
